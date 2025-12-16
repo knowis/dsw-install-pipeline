@@ -43,3 +43,9 @@ The high-level flow is this (See also [Mandatory Config](https://docs-devops-sol
   - Create token for user and configure it in Solution Designer
 - Configure Solution Designer with access to sample projects (?)
   - Create a workspace for user that groups those sample projects
+  
+  
+## Open Questions
+
+- How do we add Custom Resource Definitions to the newly created cluster using the pipeline, since this requires cluster-admin permissions?
+- Where do we host the container images that are used in the pipeline? These need to be publicly available.
