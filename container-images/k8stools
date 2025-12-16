@@ -15,7 +15,6 @@ mkdir -p /helm
 tar -oxzf /src/helm.tar.gz -C /helm
 mkdir -p /openshift-client
 tar -oxzf /src/openshift-cli.tar.gz -C /openshift-client
-ls -l /openshift-client
 EOF
 CMD
 
