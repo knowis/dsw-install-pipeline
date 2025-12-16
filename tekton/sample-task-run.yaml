@@ -1,0 +1,10 @@
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: say-hello-joerg
+spec:
+  params:
+      - name: greeting
+        value: "hello Jörg!"
+  taskRef:
+    name: sample-helm-install

@@ -1,0 +1,31 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: sample-helm-install
+spec:
+  params:
+      - name: greeting
+        type: string
+        description: The greeting formula to use
+        default: "Hello User"
+  results:
+    - name: generated-greeting
+      description: "The greeting string that the task created"
+  steps:
+    - name: say-hello
+      image: image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2
+      script: |
+        #!/usr/bin/bash
+        echo $(params['greeting']) | tee $(results.generated-greeting.path)
+
+---
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  generatedName: step1-helm-install-
+spec:
+  params:
+      - name: greeting
+        value: "hello Jörg!"
+  taskRef:
+    name: sample-helm-install
