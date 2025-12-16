@@ -1,24 +1,34 @@
 ARG UBI_TAG="latest"
 ARG HELM_VERSION="3.19.4"
+ARG OPENSHIFT_VERSION="4.18.30"
 
 FROM scratch as src
 ARG HELM_VERSION
+ARG OPENSHIFT_VERSION
 ADD https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz /helm.tar.gz
+ADD https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/${OPENSHIFT_VERSION}/openshift-client-linux-amd64-rhel9-${OPENSHIFT_VERSION}.tar.gz /openshift-cli.tar.gz
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal:${UBI_TAG} as builder
 RUN microdnf install -y tar gzip
 RUN --mount=from=src,target=/src <<EOF
 mkdir -p /helm
 tar -oxzf /src/helm.tar.gz -C /helm
+mkdir -p /openshift-client
+tar -oxzf /src/openshift-cli.tar.gz -C /openshift-client
+ls -l /openshift-client
 EOF
 CMD
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal:${UBI_TAG}
 ARG HELM_VERSION
+ARG OPENSHIFT_VERSION
 LABEL summary="Serves as the base container image for DSW install pipeline"
 LABEL maintainer="DSW Team"
 LABEL url="https://docs-devops-solution-workbench.knowis.net/"
 LABEL helm.version=${HELM_VERSION}
+LABEL openshift-cli.version=${OPENSHIFT_VERSION}
 
 RUN microdnf install -y wget
 COPY --from=builder /helm/linux-amd64/helm /usr/local/bin/
+COPY --from=builder /openshift-client/oc /usr/local/bin/
+COPY --from=builder /openshift-client/kubectl /usr/local/bin/
