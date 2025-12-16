@@ -1,10 +1,14 @@
 apiVersion: tekton.dev/v1beta1
 kind: TaskRun
 metadata:
-  name: say-hello-joerg
+  name: step1-helm-install
 spec:
   params:
-      - name: greeting
-        value: "hello Jörg!"
+    - name: chart-name
+      value: "oci://registry-1.docker.io/cloudpirates/mongodb"
+    - name: release-name
+      value: "mongo1"
+    - name: namespace
+      value: "techzone-test"
   taskRef:
     name: sample-helm-install
