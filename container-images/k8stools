@@ -1,0 +1,24 @@
+ARG UBI_TAG="latest"
+ARG HELM_VERSION="3.19.4"
+
+FROM scratch as src
+ARG HELM_VERSION
+ADD https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz /helm.tar.gz
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:${UBI_TAG} as builder
+RUN microdnf install -y tar gzip
+RUN --mount=from=src,target=/src <<EOF
+mkdir -p /helm
+tar -oxzf /src/helm.tar.gz -C /helm
+EOF
+CMD
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:${UBI_TAG}
+ARG HELM_VERSION
+LABEL summary="Serves as the base container image for DSW install pipeline"
+LABEL maintainer="DSW Team"
+LABEL url="https://docs-devops-solution-workbench.knowis.net/"
+LABEL helm.version=${HELM_VERSION}
+
+RUN microdnf install -y wget
+COPY --from=builder /helm/linux-amd64/helm /usr/local/bin/
