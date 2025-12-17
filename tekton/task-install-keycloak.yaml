@@ -142,7 +142,8 @@ spec:
         EOF
 
         # Approve Installplan
-        # oc patch installplan/install-r62qx --type merge --patch '{"spec":{"approved": true}}'
+        installplan_name="$(oc get installplan -o jsonpath="{.items[?(@.spec.clusterServiceVersionNames[0]=="$latest_csv")].metadata.name}")"
+        oc patch installplan/$installplan_name --type merge --patch '{"spec":{"approved": true}}'
         #
 
         echo "Installation of keycloak rhbk operator done"
