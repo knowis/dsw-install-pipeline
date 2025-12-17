@@ -1,0 +1,91 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: install keycloak
+spec:
+  params:
+    - name: chart
+      type: string
+      description: Fully qualified repo url of chart, e.g. oci://registry-1.docker.io/cloudpirates/postgres
+      default: "oci://registry-1.docker.io/cloudpirates/postgres"
+    - name: release-name
+      type: string
+      description: The name of the Helm release
+      default: "keycloak-postgres"
+    - name: chart-version
+      type: string
+      description: The version of the Helm chart
+      default: "v0.13.6"
+    - name: set-values
+      type: array
+      description: "Optional list of key value pairs specified like this: key=value"
+      default:
+        - "auth.existingSecret=keycloak-postgres-postgres-credentials"
+        - "auth.secretKeys.adminPasswordKey=postgres-password"
+        - "customUser.existingSecret=keycloak-postgres-keycloak-user-credentials"
+        - "customUser.secretKeys.name=username"
+        - "customUser.secretKeys.database=database"
+        - "customUser.secretKeys.password=password"
+  results:
+    - name: release-status
+      description: "The status of the Helm release"
+  steps:
+    - name: create-postgres-secrets
+      image: image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        echo "Starting generation of keycloak postgres secrets"
+
+        # Create secret 'keycloak-postgres-postgres-credentials' if it doesn't exist yet
+        if [ -z "$(oc get secret keycloak-postgres-postgres-credentials --ignore-not-found)" ]; then
+          echo "Creating secret 'keycloak-postgres-postgres-credentials'"
+          postgres-password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
+          oc create secret generic keycloak-postgres-postgres-credentials --from-literal=postgres-password="${postgres-password}"
+        else
+          echo "Secret 'keycloak-postgres-postgres-credentials' already exists. Skipping…"
+        fi
+
+        # Create secret 'keycloak-postgres-keycloak-user-credentials' if it doesn't exist yet
+        if [ -z "$(oc get secret keycloak-postgres-keycloak-user-credentials --ignore-not-found)" ]; then
+          echo "Creating secret 'keycloak-postgres-keycloak-user-credentials'"
+          keycloak-user-password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
+          oc create secret generic keycloak-postgres-keycloak-user-credentials --from-literal=username=keycloak --from-literal=database=keycloak --from-literal=password="${keycloak-user-password}"
+        else
+          echo "Secret 'keycloak-postgres-keycloak-user-credentials' already exists. Skipping…"
+        fi
+
+
+    - name: install-postgres
+      image: image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        echo "Starting Helm installation..."
+
+        # Build helm install command
+        HELM_CMD="helm install $(params.release-name) $(params.chart-name)"
+
+        # Add version if specified
+        if [ -n "$(params.chart-version)" ]; then
+          HELM_CMD="$HELM_CMD --version $(params.chart-version)"
+        fi
+
+        # Add set values if specified
+        if [ -n "$(params.set-values)" ]; then
+          HELM_CMD="$HELM_CMD --set $(params.set-values)"
+        fi
+
+        # Execute helm install
+        echo "Executing: $HELM_CMD"
+        eval $HELM_CMD
+
+        # Get release status
+        helm status $(params.release-name) | tee $(results.release-status.path)
+
+        echo "Helm installation completed successfully!"
+      env:
+        - name: HOME
+          value: /tmp
