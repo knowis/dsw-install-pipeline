@@ -20,6 +20,12 @@ spec:
       type: string
       description: "Optional list of key value pairs specified like this: key=value"
       default: "auth.existingSecret=keycloak-postgres-postgres-credentials,auth.secretKeys.adminPasswordKey=postgres-password,customUser.existingSecret=keycloak-postgres-keycloak-user-credentials,customUser.secretKeys.name=username,customUser.secretKeys.database=database,customUser.secretKeys.password=password"
+    - name: keycloak-operator-name
+      type: string
+      default: "rhbk-operator"
+    - name: keycloak-operator-channel
+      type: string
+      default: "stable-v26.4"
   results:
     - name: release-status
       description: "The status of the Helm release"
@@ -83,3 +89,66 @@ spec:
       env:
         - name: HOME
           value: /tmp
+
+    - name: install-keycloak-operator
+      image: image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        echo "Beginning installation of Keycloak via operator 'Red Hat build of Keycloak Operator [rhbk-operator]'"
+
+        # get details of latest ClusterServiceVersion in default channel
+        default_channel="$(oc get packagemanifests rhbk-operator -o jsonpath="{.status.defaultChannel}")"
+
+        latest_csv="$(oc get packagemanifests rhbk-operator -o jsonpath="{.status.channels[?(@.name=='${default_channel}')].entries[0].name}")"
+
+        catalog_source="$(oc get packagemanifests rhbk-operator -o jsonpath={.status.catalogSource})"
+
+        catalog_source_namespace="$(oc get packagemanifests rhbk-operator -o jsonpath={.status.catalogSourceNamespace})"
+
+        # Get current namespace
+        active_project="$(oc project -q)"
+
+        # Create an OperatorGroup
+
+        oc create -f - << EOF
+        apiVersion: operators.coreos.com/v1
+        kind: OperatorGroup
+        metadata:
+          generateName: ${active_project}-
+          annotations:
+            olm.providedAPIs: 'Keycloak.v2alpha1.k8s.keycloak.org,KeycloakRealmImport.v2alpha1.k8s.keycloak.org'
+        spec:
+          targetNamespaces:
+            - ${active_project}
+          upgradeStrategy: Default
+        EOF
+
+        # Create a subscription
+
+        oc apply -f - << EOF
+        apiVersion: operators.coreos.com/v1alpha1
+        kind: Subscription
+        metadata:
+          name: rhbk-operator
+        spec:
+          channel: $default_channel
+          installPlanApproval: Manual
+          name: rhbk-operator
+          source: $catalog_source
+          sourceNamespace: $catalog_source_namespace
+          startingCSV: $latest_csv
+        EOF
+
+        # Approve Installplan
+        # oc patch installplan/install-r62qx --type merge --patch '{"spec":{"approved": true}}'
+        #
+
+        echo "Installation of keycloak rhbk operator done"
+
+    - name: create-keycloak-instance
+      image: image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2
+      script: |
+        #!/usr/bin/bash
+        set -e
