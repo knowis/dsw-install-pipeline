@@ -107,8 +107,8 @@ spec:
 
         catalog_source_namespace="$(oc get packagemanifests rhbk-operator -o jsonpath={.status.catalogSourceNamespace})"
 
-        # Get current namespace
-        active_project="$(oc project -q)"
+        # Get current namespace by querying the namespace of the secret created in step 1 that we are dependent on anyway as e.g. `oc project` will not report a current context
+        active_project="$(oc get secret keycloak-postgres-keycloak-user-credentials -o jsonpath="{.metadata.namespace}")"
 
         # Create an OperatorGroup
 
@@ -153,3 +153,38 @@ spec:
       script: |
         #!/usr/bin/bash
         set -e
+
+        # Obtain cluster app url
+        app_url="$(oc get ingress.config -o jsonpath="{.items[0].spec.domain}")"
+
+        oc create -f - << EOF
+        apiVersion: k8s.keycloak.org/v2alpha1
+        kind: Keycloak
+        metadata:
+          name: dsw-keycloak
+        spec:
+          additionalOptions:
+            - name: http-relative-path
+              value: /auth
+            - name: metrics-enabled
+              value: 'true'
+            - name: health-enabled
+              value: 'true'
+          db:
+            database: keycloak
+            host: <dbhost>
+            passwordSecret:
+              key: password
+              name: keycloak-postgres-keycloak-user-credentials
+            port: 5432
+            usernameSecret:
+              key: username
+              name: keycloak-postgres-keycloak-user-credentials
+            vendor: postgres
+          hostname:
+            hostname: dsw-auth.${app_url}
+          ingress:
+            classname: openshift-default
+            enabled: true
+          instances: 1
+        EOF
