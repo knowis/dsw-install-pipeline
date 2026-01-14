@@ -13,6 +13,7 @@ cleanup:
     helm uninstall $(helm list -q)
 
     oc delete persistentvolumeclaim,route --all
+    oc delete secret --field-selector type=Opaque
 
 runtask:
     oc apply -f tekton/task-install-keycloak.yaml

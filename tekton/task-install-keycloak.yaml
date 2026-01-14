@@ -37,8 +37,6 @@ spec:
       description: Image to use to execute step
       default: "image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2"
   results:
-    - name: release-status
-      description: "The status of the Helm release"
     - name: keycloak-url
       description: "Url for keycloak admin web"
     - name: keycloak-credentials-secret
@@ -102,8 +100,9 @@ spec:
         echo "Executing: $HELM_CMD"
         eval $HELM_CMD
 
-        # Get release status
-        helm status $(params.postgres-release-name) | tee $(results.release-status.path)
+        # build service string
+        PGNS=$(oc get service $(params.postgres-release-name) -o jsonpath='{.metadata.namespace}')
+        echo "$(params.postgres-release-name).${PGNS}.svc.cluster.local" | tee $(results.postgres-service-url.path)
 
         echo "Helm installation completed successfully!"
       env:
