@@ -23,7 +23,7 @@ spec:
     - name: keycloak-release-name
       type: string
       description: The name of the Helm release
-      default: "dsw-keycloak"
+      default: "dsw-auth"
     - name: keycloak-chart-version
       type: string
       description: The version of the Helm chart
@@ -176,121 +176,14 @@ spec:
         #!/usr/bin/bash
         set -e
 
-        echo "Getting cluster app base url"
-        app_base_url="$(oc get ingress.config.openshift.io/cluster -o jsonpath='{.spec.domain}')"
-        echo "App base url for this cluster is ${app_base_url}"
+        #echo "Getting cluster app base url"
+        #app_base_url="$(oc get ingress.config.openshift.io/cluster -o jsonpath='{.spec.domain}')"
+        #echo "App base url for this cluster is ${app_base_url}"
+        #active_project="$(oc get secret keycloak-postgres-keycloak-user-credentials -o jsonpath="{.metadata.namespace}")"
+        #echo "Assuming current namespace is $active_project"
+        #kc_host="dsw-auth-$active_project.$app_base_url"
+        #echo "Creating keycloak route with host $kc_host..."
+        #oc create route edge dsw-auth-route --service="keycloak-release-name" --hostname="$kc_host"
 
-        active_project="$(oc get secret keycloak-postgres-keycloak-user-credentials -o jsonpath="{.metadata.namespace}")"
-        echo "Assuming current namespace is $active_project"
-
-        kc_host="dsw-auth-$active_project.$app_base_url"
-
-        echo "Creating keycloak route with host $kc_host..."
-
-        oc create route edge dsw-auth-route --service="keycloak-release-name" --hostname="$kc_host"
-
-
-
-
-
-
-
-
-    # - name: install-keycloak-operator
-    #   image: image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2
-    #   script: |
-    #     #!/usr/bin/bash
-    #     set -e
-
-    #     echo "Beginning installation of Keycloak via operator 'Red Hat build of Keycloak Operator [rhbk-operator]'"
-
-    #     # get details of latest ClusterServiceVersion in default channel
-    #     default_channel="$(oc get packagemanifests rhbk-operator -o jsonpath="{.status.defaultChannel}")"
-
-    #     latest_csv="$(oc get packagemanifests rhbk-operator -o jsonpath="{.status.channels[?(@.name=='${default_channel}')].entries[0].name}")"
-
-    #     catalog_source="$(oc get packagemanifests rhbk-operator -o jsonpath={.status.catalogSource})"
-
-    #     catalog_source_namespace="$(oc get packagemanifests rhbk-operator -o jsonpath={.status.catalogSourceNamespace})"
-
-    #     # Get current namespace by querying the namespace of the secret created in step 1 that we are dependent on anyway as e.g. `oc project` will not report a current context
-    #     active_project="$(oc get secret keycloak-postgres-keycloak-user-credentials -o jsonpath="{.metadata.namespace}")"
-
-    #     # Create an OperatorGroup
-
-    #     oc create -f - << EOF
-    #     apiVersion: operators.coreos.com/v1
-    #     kind: OperatorGroup
-    #     metadata:
-    #       generateName: ${active_project}-
-    #       annotations:
-    #         olm.providedAPIs: 'Keycloak.v2alpha1.k8s.keycloak.org,KeycloakRealmImport.v2alpha1.k8s.keycloak.org'
-    #     spec:
-    #       targetNamespaces:
-    #         - ${active_project}
-    #       upgradeStrategy: Default
-    #     EOF
-
-    #     # Create a subscription
-
-    #     oc apply -f - << EOF
-    #     apiVersion: operators.coreos.com/v1alpha1
-    #     kind: Subscription
-    #     metadata:
-    #       name: rhbk-operator
-    #     spec:
-    #       channel: $default_channel
-    #       installPlanApproval: Manual
-    #       name: rhbk-operator
-    #       source: $catalog_source
-    #       sourceNamespace: $catalog_source_namespace
-    #       startingCSV: $latest_csv
-    #     EOF
-
-    #     # Approve Installplan
-    #     installplan_name="$(oc get installplan -o jsonpath="{.items[?(@.spec.clusterServiceVersionNames[0]=="$latest_csv")].metadata.name}")"
-    #     oc patch installplan/$installplan_name --type merge --patch '{"spec":{"approved": true}}'
-    #     #
-
-    #     echo "Installation of keycloak rhbk operator done"
-
-    # - name: create-keycloak-instance
-    #   image: image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2
-    #   script: |
-    #     #!/usr/bin/bash
-    #     set -e
-
-    #     # Obtain cluster app url
-    #     app_url="$(oc get ingress.config -o jsonpath="{.items[0].spec.domain}")"
-
-    #     oc create -f - << EOF
-    #     apiVersion: k8s.keycloak.org/v2alpha1
-    #     kind: Keycloak
-    #     metadata:
-    #       name: dsw-keycloak
-    #     spec:
-    #       additionalOptions:
-    #         - name: http-relative-path
-    #           value: /auth
-    #         - name: metrics-enabled
-    #           value: 'true'
-    #         - name: health-enabled
-    #           value: 'true'
-    #       db:
-    #         database: keycloak
-    #         host: <dbhost>
-    #         passwordSecret:
-    #           key: password
-    #           name: keycloak-postgres-keycloak-user-credentials
-    #         port: 5432
-    #         usernameSecret:
-    #           key: username
-    #           name: keycloak-postgres-keycloak-user-credentials
-    #         vendor: postgres
-    #       hostname:
-    #         hostname: dsw-auth.${app_url}
-    #       ingress:
-    #         classname: openshift-default
-    #         enabled: true
-    #       instances: 1
-    #     EOF
+        echo "Createing keycloak route"
+        oc create route edge dsw-auth --service="$(params.keycloak-release-name)-keycloak" --port=8080
