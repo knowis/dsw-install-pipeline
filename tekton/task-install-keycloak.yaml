@@ -39,6 +39,14 @@ spec:
   results:
     - name: release-status
       description: "The status of the Helm release"
+    - name: keycloak-url
+      description: "Url for keycloak admin web"
+    - name: keycloak-credentials-secret
+      description: "Name of secret containining credentials for keycloak admin user"
+    - name: postgres-credentials-secret
+      description: "Name of secret containing credentials for postgres admin user"
+    - name: postgres-service-url
+      description: "Name of service providing postgress access"
   steps:
     - name: create-postgres-secrets
       image: "$(params.default-step-image)"
@@ -56,6 +64,8 @@ spec:
         else
           echo "Secret 'keycloak-postgres-postgres-credentials' already exists. Skipping…"
         fi
+
+        echo "keycloak-postgres-postgres-credentials" | tee $(results.postgres-credentials-secret.path)
 
         # Create secret 'keycloak-postgres-keycloak-user-credentials' if it doesn't exist yet
         if [ -z "$(oc get secret keycloak-postgres-keycloak-user-credentials --ignore-not-found)" ]; then
@@ -176,14 +186,7 @@ spec:
         #!/usr/bin/bash
         set -e
 
-        #echo "Getting cluster app base url"
-        #app_base_url="$(oc get ingress.config.openshift.io/cluster -o jsonpath='{.spec.domain}')"
-        #echo "App base url for this cluster is ${app_base_url}"
-        #active_project="$(oc get secret keycloak-postgres-keycloak-user-credentials -o jsonpath="{.metadata.namespace}")"
-        #echo "Assuming current namespace is $active_project"
-        #kc_host="dsw-auth-$active_project.$app_base_url"
-        #echo "Creating keycloak route with host $kc_host..."
-        #oc create route edge dsw-auth-route --service="keycloak-release-name" --hostname="$kc_host"
-
         echo "Createing keycloak route"
         oc create route edge dsw-auth --service="$(params.keycloak-release-name)-keycloak" --port=8080
+
+        oc get route dsw-auth -o jsonpath='{.spec.host}' | tee $(results.keycloak-url.path)
