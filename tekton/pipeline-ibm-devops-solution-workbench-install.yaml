@@ -1,0 +1,9 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: dsw-install
+spec: 
+  tasks:
+      - name: install-keycloak
+        taskRef:
+          name: task-install-keycloak
