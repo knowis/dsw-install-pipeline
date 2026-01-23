@@ -1,8 +1,12 @@
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1
 kind: Task
 metadata:
   name: install-keycloak
 spec:
+  workspaces:
+    - name: shared-wksp
+      description: |
+        Folder to read and write files to that are shared amongst tasks in the parent pipeline
   params:
     - name: postgres-chart-name
       type: string
@@ -189,3 +193,15 @@ spec:
         oc create route edge dsw-auth --service="$(params.keycloak-release-name)-keycloak" --port=8080
 
         oc get route dsw-auth -o jsonpath='{.spec.host}' | tee $(results.keycloak-url.path)
+
+    - name: wksp-test
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+          echo "hello from keycloak-install!" >> $(workspaces.shared-wksp.path)/message
+        fi
+
+        cat $(workspaces.shared-wksp.path)/message | echo

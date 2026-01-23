@@ -1,0 +1,22 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+    name: dsw-install
+spec:
+    workspaces:
+        - name: global-wksp
+    tasks:
+        - name: bootstrap
+          taskRef:
+              name: bootstrap
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+        - name: install-keycloak
+          taskRef:
+              name: install-keycloak
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          runAfter:
+              - bootstrap

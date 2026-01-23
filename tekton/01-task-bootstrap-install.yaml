@@ -1,0 +1,24 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: bootstrap
+spec:
+  workspaces:
+    - name: shared-wksp
+      description: |
+        Folder to read and write files to that are shared amongst tasks in the parent pipeline
+  params:
+    - name: default-step-image
+      type: string
+      description: Image to use to execute step
+      default: "image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2"
+  steps:
+    - name: bootstrap-install
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+          echo "hello from bootstrap!" > $(workspaces.shared-wksp.path)/message
+        fi

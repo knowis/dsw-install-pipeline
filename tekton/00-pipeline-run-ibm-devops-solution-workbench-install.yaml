@@ -1,0 +1,16 @@
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: dsw-install-pipeline-
+spec:
+  pipelineRef:
+    name: dsw-install
+  workspaces:
+      - name: global-wksp
+        volumeClaimTemplate:
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 1Gi
