@@ -43,7 +43,7 @@ spec:
           stringData:
             hostname: "https://$(params.keycloak-url)"
             realm: "$(params.keycloak-dsw-realm-name)"
-          EOF
+        EOF
         else
           echo "Secret k5-iam-settings already exists. Skipping creation…"
         fi
@@ -54,7 +54,8 @@ spec:
         set -e
 
         echo "Reading keycloak credentials from secret $(params.keycloak-credentials-secret)"
-        KC_ADMIN_PW=$(oc get secret $(params.keycloak-credentials-secret) -o jsonpath='{.data.admin-password}'|base64 -d)
+        KC_CRED_SECRET=$(params.keycloak-credentials-secret)
+        KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}'|base64 -d)"
 
         # Create secret 'k5-iam-secret' if it doesn't exist yet
         if [ -z "$(oc get secret k5-iam-secret --ignore-not-found)" ]; then
@@ -67,7 +68,7 @@ spec:
           stringData:
             adminUsername: "admin"
             adminPassword: "$KC_ADMIN_PW"
-          EOF
+        EOF
         else
           echo "Secret k5-iam-secret already exists. Skipping creation…"
         fi
@@ -87,7 +88,7 @@ spec:
             name: k5-encryption-master-key
           stringData:
             key: "$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 25)"
-          EOF
+        EOF
         else
           echo "Secret k5-encryption-master-key already exists. Skipping creation…"
         fi
