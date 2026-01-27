@@ -1,0 +1,24 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: test-task
+spec:
+  workspaces:
+    - name: shared-wksp
+      description: |
+        Folder to read and write files to that are shared amongst tasks in the parent pipeline
+  params:
+    - name: default-step-image
+      type: string
+      description: Image to use to execute step
+    - name: cluster-app-url
+      type: string
+      description: "Url (suffix) for services exposed by the cluster"
+  steps:
+    - name: use-result
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        echo "Cluster app url is: $(params.cluster-app-url)"

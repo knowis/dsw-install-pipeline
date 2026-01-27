@@ -5,8 +5,8 @@ The DSW install pipeline focuses on installing the design-time parts of DSW firs
 
 ## Flow
 
-- establish some pipeline global facts like cluster url (script)
-- install keycloak (script & helm)
+- establish some pipeline global facts like cluster url (script) ✔️
+- install keycloak (script & helm) ✔️
 - install schema registry Apicurio (helm?)
 - create mandatory configuration secrets (script)
 - install dsw (script & helm)

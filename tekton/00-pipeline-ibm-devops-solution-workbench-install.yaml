@@ -8,6 +8,10 @@ spec:
           type: string
           description: Image to use to execute step
           default: "image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2"
+        - name: keycloak-dsw-realm-name
+          type: string
+          description: "Name of keycloak realm to authenticate DSW against"
+          default: "dsw"
     workspaces:
         - name: global-wksp
     tasks:
@@ -31,14 +35,33 @@ spec:
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
-        # - name: install-keycloak
-        #   params:
-        #       - name: default-step-image
-        #         value: "$(params.default-step-image)"
-        #   taskRef:
-        #       name: install-keycloak
-        #   workspaces:
-        #       - name: shared-wksp
-        #         workspace: global-wksp
-        #   runAfter:
-        #       - bootstrap
+        - name: install-keycloak
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: keycloak-dsw-realm-name
+                value: "$(params.keycloak-dsw-realm-name)"
+          taskRef:
+              name: install-keycloak
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          runAfter:
+              - bootstrap
+        - name: create-mandatory-config
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: cluster-app-url
+                value: "$(tasks.bootstrap.results.cluster-app-url)"
+              - name: keycloak-dsw-realm-name
+                value: "$(params.keycloak-dsw-realm-name)"
+              - name: keycloak-credentials-secret
+                value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
+              - name: keycloak-url
+                value: "$(tasks.install-keycloak.results.keycloak-url)"
+          taskRef:
+              name: create-mandatory-config
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp

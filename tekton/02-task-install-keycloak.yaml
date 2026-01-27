@@ -31,7 +31,7 @@ spec:
     - name: keycloak-chart-version
       type: string
       description: The version of the Helm chart
-      default: " 0.11.4"
+      default: "0.11.4"
     - name: postgres-set-values
       type: string
       description: "Optional list of key value pairs specified like this: key=value"
@@ -39,9 +39,13 @@ spec:
     - name: default-step-image
       type: string
       description: Image to use to execute step
+    - name: keycloak-dsw-realm-name
+      type: string
+      description: "Name of realm in keycloak to be used for authenticating to DSW"
+      default: "dsw"
   results:
     - name: keycloak-url
-      description: "Url for keycloak admin web"
+      description: "Url for keycloak admin web (without protocol)"
     - name: keycloak-credentials-secret
       description: "Name of secret containining credentials for keycloak admin user"
     - name: postgres-credentials-secret
@@ -121,13 +125,16 @@ spec:
         echo "Starting generation of keycloak secret"
 
         # Create secret 'keycloak-credentials' if it doesn't exist yet
-        if [ -z "$(oc get secret keycloak-credentials --ignore-not-found)" ]; then
-          echo "Creating secret 'keycloak-credentials'"
+        KC_CRED_SECRET="keycloak-credentials"
+        if [ -z "$(oc get secret $KC_CRED_SECRET --ignore-not-found)" ]; then
+          echo "Creating secret $KC_CRED_SECRET"
           admin_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
-          oc create secret generic keycloak-credentials --from-literal=admin-password="${admin_password}"
+          oc create secret generic $KC_CRED_SECRET --from-literal=admin-password="${admin_password}"
         else
-          echo "Secret 'keycloak-credentials' already exists. Skipping…"
+          echo "Secret $KC_CRED_SECRET already exists. Skipping…"
         fi
+
+        echo $KC_CRED_SECRET > $(results.keycloak-credentials-secret.path)
 
     - name: install-keycloak-chart
       image: "$(params.default-step-image)"
@@ -172,6 +179,15 @@ spec:
           enabled: false
         mariadb:
           enabled: false
+
+        # Create dsw realm
+        realm:
+          import: true
+          configFile: |
+            {
+              "realm": "$(params.keycloak-dsw-realm-name)",
+              "enabled": true
+            }
 
         resources:
           requests:

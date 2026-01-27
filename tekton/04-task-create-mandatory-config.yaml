@@ -1,0 +1,93 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: create-mandatory-config
+spec:
+  workspaces:
+    - name: shared-wksp
+      description: |
+        Folder to read and write files to that are shared amongst tasks in the parent pipeline
+  params:
+    - name: default-step-image
+      type: string
+      description: Image to use to execute step
+    - name: keycloak-dsw-realm-name
+      type: string
+      description: "Name of realm in keycloak to be used for authenticating to DSW"
+      default: "dsw"
+    - name: keycloak-credentials-secret
+      type: string
+      description: "Name of the secret holding the admin credentials for keycloak"
+      default: "keycloak-credentials"
+    - name: keycloak-url
+      type: string
+      description: "Url of keycloak admin host (without protocol)"
+  results:
+      - name: cluster-app-url
+        description: "Url (suffix) for services exposed by the cluster"
+  steps:
+    - name: create-iam-settings-secret
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        # Create secret 'k5-iam-settings' if it doesn't exist yet
+        if [ -z "$(oc get secret k5-iam-settings --ignore-not-found)" ]; then
+          echo "Createing k5-iam-settings secret"
+          oc create -f - << EOF
+          kind: Secret
+          apiVersion: v1
+          metadata:
+            name: k5-iam-settings
+          stringData:
+            hostname: "https://$(params.keycloak-url)"
+            realm: "$(params.keycloak-dsw-realm-name)"
+          EOF
+        else
+          echo "Secret k5-iam-settings already exists. Skipping creation…"
+        fi
+    - name: create-iam-secret
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        echo "Reading keycloak credentials from secret $(params.keycloak-credentials-secret)"
+        KC_ADMIN_PW=$(oc get secret $(params.keycloak-credentials-secret) -o jsonpath='{.data.admin-password}'|base64 -d)
+
+        # Create secret 'k5-iam-secret' if it doesn't exist yet
+        if [ -z "$(oc get secret k5-iam-secret --ignore-not-found)" ]; then
+          echo "Createing k5-iam-secret secret"
+          oc create -f - << EOF
+          kind: Secret
+          apiVersion: v1
+          metadata:
+            name: k5-iam-secret
+          stringData:
+            adminUsername: "admin"
+            adminPassword: "$KC_ADMIN_PW"
+          EOF
+        else
+          echo "Secret k5-iam-secret already exists. Skipping creation…"
+        fi
+    - name: create-master-key-secret
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        # Create secret 'k5-encryption-master-key' if it doesn't exist yet
+        if [ -z "$(oc get secret k5-encryption-master-key --ignore-not-found)" ]; then
+          echo "Createing k5-encryption-master-key"
+          oc create -f - << EOF
+          kind: Secret
+          apiVersion: v1
+          metadata:
+            name: k5-encryption-master-key
+          stringData:
+            key: "$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 25)"
+          EOF
+        else
+          echo "Secret k5-encryption-master-key already exists. Skipping creation…"
+        fi
