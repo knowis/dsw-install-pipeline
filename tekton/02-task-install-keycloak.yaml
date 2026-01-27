@@ -39,7 +39,6 @@ spec:
     - name: default-step-image
       type: string
       description: Image to use to execute step
-      default: "image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2"
   results:
     - name: keycloak-url
       description: "Url for keycloak admin web"
@@ -201,7 +200,11 @@ spec:
         set -e
 
         if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+          echo "Sharing info via $(workspaces.shared-wksp.path)/message"
+          ls -al $(workspaces.shared-wksp.path)
+          cat $(workspaces.shared-wksp.path)/message
           echo "hello from keycloak-install!" >> $(workspaces.shared-wksp.path)/message
+          cat $(workspaces.shared-wksp.path)/message | echo -
+        else
+          echo "Workspace shared-wksp not bound"
         fi
-
-        cat $(workspaces.shared-wksp.path)/message | echo

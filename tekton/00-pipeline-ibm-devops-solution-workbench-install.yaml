@@ -3,16 +3,27 @@ kind: Pipeline
 metadata:
     name: dsw-install
 spec:
+    params:
+        - name: default-step-image
+          type: string
+          description: Image to use to execute step
+          default: "image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2"
     workspaces:
         - name: global-wksp
     tasks:
         - name: bootstrap
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
           taskRef:
               name: bootstrap
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
         - name: install-keycloak
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
           taskRef:
               name: install-keycloak
           workspaces:

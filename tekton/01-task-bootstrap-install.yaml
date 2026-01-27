@@ -11,7 +11,9 @@ spec:
     - name: default-step-image
       type: string
       description: Image to use to execute step
-      default: "image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.2"
+  results:
+      - name: cluster-app-url
+        description: "Url (suffix) for services exposed by the cluster"
   steps:
     - name: bootstrap-install
       image: "$(params.default-step-image)"
@@ -20,5 +22,22 @@ spec:
         set -e
 
         if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+          echo "Sharing info via $(workspaces.shared-wksp.path)/message"
           echo "hello from bootstrap!" > $(workspaces.shared-wksp.path)/message
+        else
+          echo "Workspace shared-wksp not bound"
         fi
+    - name: determine-cluster-app-host
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        echo "Createing dummy route to extract apps url from"
+        SVC_NAME="dummy-route-$(tr -dc 'a-z0-9' < /dev/random | head -c 5)"
+        oc create route edge --service=$SVC_NAME --port=34567
+        oc get route $SVC_NAME -o jsonpath='{.spec.host}'|sed -nE 's/^.*(\.apps\..*$)/\1/p' | tee $(results.cluster-app-url.path)
+
+        oc delete route $SVC_NAME
+
+        echo "Deleted dummy route $SVC_NAME again"
