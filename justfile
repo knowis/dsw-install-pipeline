@@ -22,5 +22,6 @@ runtask:
 run-pipeline:
     oc apply -f tekton/01-task-bootstrap-install.yaml
     oc apply -f tekton/02-task-install-keycloak.yaml
+    oc apply -f tekton/0x-task-test-task.yaml
     oc apply -f tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml
     oc create -f tekton/00-pipeline-run-ibm-devops-solution-workbench-install.yaml

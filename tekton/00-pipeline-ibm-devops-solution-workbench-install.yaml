@@ -20,14 +20,25 @@ spec:
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
-        - name: install-keycloak
+        - name: test-task
           params:
               - name: default-step-image
                 value: "$(params.default-step-image)"
+              - name: cluster-app-url
+                value: "$(tasks.bootstrap.results.cluster-app-url)"
           taskRef:
-              name: install-keycloak
+              name: test-task
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
-          runAfter:
-              - bootstrap
+        # - name: install-keycloak
+        #   params:
+        #       - name: default-step-image
+        #         value: "$(params.default-step-image)"
+        #   taskRef:
+        #       name: install-keycloak
+        #   workspaces:
+        #       - name: shared-wksp
+        #         workspace: global-wksp
+        #   runAfter:
+        #       - bootstrap
