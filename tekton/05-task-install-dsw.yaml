@@ -1,0 +1,80 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: install-dsw
+spec:
+  workspaces:
+    - name: shared-wksp
+      description: |
+        Folder to read and write files to that are shared amongst tasks in the parent pipeline
+  params:
+    - name: default-step-image
+      type: string
+      description: Image to use to execute step
+    - name: keycloak-dsw-realm-name
+      type: string
+      description: "Name of realm in keycloak to be used for authenticating to DSW"
+      default: "dsw"
+    - name: keycloak-credentials-secret
+      type: string
+      description: "Name of the secret holding the admin credentials for keycloak"
+      default: "keycloak-credentials"
+    - name: keycloak-url
+      type: string
+      description: "Url of keycloak admin host (without protocol)"
+    - name: devops-model-chart-repo
+      type: string
+      description: Fully qualified repo url where the dsw (ibm-devops-model) chart is published
+      default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+    - name: devops-model-chart-version
+      type: string
+      description: helm chart version to install
+      default: 5.1.1
+    - name: 
+  steps:
+    - name: install-dsw-chart
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        echo "Adding repo"
+        HELM_REPO_NAME=ibm-devops-repo
+        helm repo add $HELM_REPO_NAME $(params.devops-model-chart-repo)
+        helm repo update
+
+        echo "Starting Helm installation..."
+
+        # Build helm install command
+        HELM_CMD="helm install "
+
+        # Add version if specified
+        if [ -n "$(params.devops-model-chart-version)" ]; then
+          HELM_CMD="$HELM_CMD --version $(params.devops-model-chart-version)"
+        fi
+        
+        # Execute helm install
+        echo "Executing: $HELM_CMD"
+        eval '$HELM_CMD --values - << EOF
+        global:
+          domain: test.apps.openshift-03.knowis.cloud                         # TODO: change to your domain
+          rationalLicenseKeyServer: "@baw-isf.knowis.net"                     # TODO: change to your server
+          image:
+            registry: "de.icr.io/isw_release"
+            privateRegistry: ''
+            prefix: ''
+          platform:
+            enabled: false
+          k5:
+            identity:
+              secretName: "k5-keycloak-credentials"
+              url: "https://auth.apps.openshift-03.knowis.cloud"              # TODO: change to your auth server
+              realm: dsw
+              username: keycloak                                              # TODO: change to your username
+              password: keycloakPW                                            # TODO: change to your password
+            secrets:
+              mongodb: "k5-designer-mongodb"
+              mongodbKey: "connectionString" 
+              mongodbConnectionString: "mongodb://root:pw@mongodb.namespace.svc.cluster.local:27017/admin?ssl=false"   # TODO: change to your mongodb connection string
+              truststore: "k5-hub-truststore"
+        EOF'

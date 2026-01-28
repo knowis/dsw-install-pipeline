@@ -1,0 +1,8 @@
+ibm-devops-model/charts
+ibm-devops-model/templates
+ibm-devops-model/Chart.lock
+ibm-devops-model/Chart.yaml
+ibm-devops-model/manifest.json
+ibm-devops-model/README.md
+ibm-devops-model/values.yaml
+ibm-devops-model/.helmignore

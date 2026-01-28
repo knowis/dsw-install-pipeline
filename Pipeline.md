@@ -10,3 +10,5 @@ The DSW install pipeline focuses on installing the design-time parts of DSW firs
 - install schema registry Apicurio (helm?)
 - create mandatory configuration secrets (script)
 - install dsw (script & helm)
+- install gitea/forgejo
+- Create user, configure user and provide output about how and where to login in the pipeline
