@@ -30,7 +30,9 @@ spec:
       type: string
       description: helm chart version to install
       default: 5.1.1
-    - name: 
+    - name: cluster-app-url
+      type: string
+      description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
   steps:
     - name: install-dsw-chart
       image: "$(params.default-step-image)"
@@ -52,12 +54,13 @@ spec:
         if [ -n "$(params.devops-model-chart-version)" ]; then
           HELM_CMD="$HELM_CMD --version $(params.devops-model-chart-version)"
         fi
-        
+
         # Execute helm install
         echo "Executing: $HELM_CMD"
         eval '$HELM_CMD --values - << EOF
+        # value overrides as provided by MMe on January, 22nd 2026 (teams)
         global:
-          domain: test.apps.openshift-03.knowis.cloud                         # TODO: change to your domain
+          domain: dsw.$(params.cluster-app-url)
           rationalLicenseKeyServer: "@baw-isf.knowis.net"                     # TODO: change to your server
           image:
             registry: "de.icr.io/isw_release"
@@ -67,14 +70,14 @@ spec:
             enabled: false
           k5:
             identity:
-              secretName: "k5-keycloak-credentials"
-              url: "https://auth.apps.openshift-03.knowis.cloud"              # TODO: change to your auth server
-              realm: dsw
+              secretName: "$(params.keycloak-credentials-secret)"
+              url: "https://$(params.keycloak-url)"
+              realm: $(params.keycloak-dsw-realm-name)
               username: keycloak                                              # TODO: change to your username
               password: keycloakPW                                            # TODO: change to your password
             secrets:
               mongodb: "k5-designer-mongodb"
-              mongodbKey: "connectionString" 
+              mongodbKey: "connectionString"
               mongodbConnectionString: "mongodb://root:pw@mongodb.namespace.svc.cluster.local:27017/admin?ssl=false"   # TODO: change to your mongodb connection string
               truststore: "k5-hub-truststore"
         EOF'
