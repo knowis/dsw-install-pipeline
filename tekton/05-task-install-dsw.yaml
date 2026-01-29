@@ -73,8 +73,6 @@ spec:
               secretName: "$(params.keycloak-credentials-secret)"
               url: "https://$(params.keycloak-url)"
               realm: $(params.keycloak-dsw-realm-name)
-              username: keycloak                                              # TODO: change to your username
-              password: keycloakPW                                            # TODO: change to your password
             secrets:
               mongodb: "k5-designer-mongodb"
               mongodbKey: "connectionString"
