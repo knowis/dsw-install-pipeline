@@ -72,23 +72,3 @@ spec:
         else
           echo "Secret k5-iam-secret already exists. Skipping creation…"
         fi
-    - name: create-master-key-secret
-      image: "$(params.default-step-image)"
-      script: |
-        #!/usr/bin/bash
-        set -e
-
-        # Create secret 'k5-encryption-master-key' if it doesn't exist yet
-        if [ -z "$(oc get secret k5-encryption-master-key --ignore-not-found)" ]; then
-          echo "Createing k5-encryption-master-key"
-          oc create -f - << EOF
-          kind: Secret
-          apiVersion: v1
-          metadata:
-            name: k5-encryption-master-key
-          stringData:
-            key: "$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 25)"
-        EOF
-        else
-          echo "Secret k5-encryption-master-key already exists. Skipping creation…"
-        fi

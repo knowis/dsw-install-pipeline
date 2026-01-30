@@ -91,7 +91,7 @@ spec:
         echo "Starting Helm installation..."
 
         # Build helm install command
-        HELM_CMD="helm install $(params.postgres-release-name) $(params.postgres-chart-name)"
+        HELM_CMD="helm install $(params.postgres-release-name) $(params.postgres-chart-name) --wait --timeout 10m0s"
 
         # Add version if specified
         if [ -n "$(params.postgres-chart-version)" ]; then
@@ -134,7 +134,7 @@ spec:
           echo "Secret $KC_CRED_SECRET already exists. Skipping…"
         fi
 
-        echo $KC_CRED_SECRET > $(results.keycloak-credentials-secret.path)
+        echo -n $KC_CRED_SECRET > $(results.keycloak-credentials-secret.path)
 
     - name: install-keycloak-chart
       image: "$(params.default-step-image)"
@@ -147,7 +147,7 @@ spec:
         echo "Assuming current namespace is $active_project"
 
         # Build helm install command
-        HELM_CMD="helm install $(params.keycloak-release-name) $(params.keycloak-chart-name)"
+        HELM_CMD="helm install $(params.keycloak-release-name) $(params.keycloak-chart-name) --wait --timeout 10m0s"
 
         # Add version if specified
         if [ -n "$(params.keycloak-chart-version)" ]; then

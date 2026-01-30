@@ -26,6 +26,14 @@ spec:
       type: string
       description: Fully qualified repo url where the dsw (ibm-devops-model) chart is published
       default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+    - name: devops-model-release-name
+      type: string
+      description: "Release name to use for helm install cmd of devops-mode-chart"
+      default: "dsw"
+    - name: devops-model-chart-name
+      type: string
+      description: (Short) name of helm chart to install
+      default: "ibm-devops-model"
     - name: devops-model-chart-version
       type: string
       description: helm chart version to install
@@ -41,14 +49,17 @@ spec:
         set -e
 
         echo "Adding repo"
+        helm version
         HELM_REPO_NAME=ibm-devops-repo
         helm repo add $HELM_REPO_NAME $(params.devops-model-chart-repo)
         helm repo update
+        helm search repo
+
 
         echo "Starting Helm installation..."
 
         # Build helm install command
-        HELM_CMD="helm install "
+        HELM_CMD="helm install $(params.devops-model-release-name) ${HELM_REPO_NAME}/$(params.devops-model-chart-name) --wait --timeout 10m0s"
 
         # Add version if specified
         if [ -n "$(params.devops-model-chart-version)" ]; then
@@ -60,11 +71,11 @@ spec:
         eval '$HELM_CMD --values - << EOF
         # value overrides as provided by MMe on January, 22nd 2026 (teams)
         global:
-          domain: dsw.$(params.cluster-app-url)
+          domain: dsw$(params.cluster-app-url)
           rationalLicenseKeyServer: "@baw-isf.knowis.net"                     # TODO: change to your server
           image:
             registry: "de.icr.io/isw_release"
-            privateRegistry: ''
+            privateRegistry: null
             prefix: ''
           platform:
             enabled: false
