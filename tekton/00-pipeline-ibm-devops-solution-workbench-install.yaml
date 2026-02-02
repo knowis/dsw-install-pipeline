@@ -364,9 +364,9 @@ spec:
                       echo "Secret k5-iam-secret already exists. Skipping creation…"
                     fi
 
-                      workspaces:
-                            - name: shared-wksp
-                              workspace: global-wksp
+          workspaces:
+                - name: shared-wksp
+                  workspace: global-wksp
         - name: install-dsw
           params:
               - name: default-step-image
