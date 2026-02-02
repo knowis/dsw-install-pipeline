@@ -1,7 +1,0 @@
-apiVersion: tekton.dev/v1beta1
-kind: TaskRun
-metadata:
-  name: exec-keycloak-install-task
-spec:
-  taskRef:
-    name: install-keycloak

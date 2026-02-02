@@ -65,30 +65,308 @@ spec:
                 value: "$(params.default-step-image)"
               - name: keycloak-dsw-realm-name
                 value: "$(params.keycloak-dsw-realm-name)"
-          taskRef:
-              name: install-keycloak
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
+          taskSpec:
+              displayName: install-keycloak
+              description: "Task to install keycloak (usinh helm) and its database dependency postgresql"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: postgres-chart-name
+                  type: string
+                  description: Fully qualified repo url of chart, e.g. oci://registry-1.docker.io/cloudpirates/postgres
+                  default: "oci://registry-1.docker.io/cloudpirates/postgres"
+                - name: postgres-release-name
+                  type: string
+                  description: The name of the Helm release
+                  default: "keycloak-postgres"
+                - name: postgres-chart-version
+                  type: string
+                  description: The version of the Helm chart
+                  default: "0.13.8"
+                - name: keycloak-chart-name
+                  type: string
+                  description: Fully qualified repo url of chart, e.g. oci://registry-1.docker.io/cloudpirates/keycloak
+                  default: "oci://registry-1.docker.io/cloudpirates/keycloak"
+                - name: keycloak-release-name
+                  type: string
+                  description: The name of the Helm release
+                  default: "dsw-auth"
+                - name: keycloak-chart-version
+                  type: string
+                  description: The version of the Helm chart
+                  default: "0.11.4"
+                - name: postgres-set-values
+                  type: string
+                  description: "Optional list of key value pairs specified like this: key=value"
+                  default: "auth.existingSecret=keycloak-postgres-postgres-credentials,auth.secretKeys.adminPasswordKey=postgres-password,customUser.existingSecret=keycloak-postgres-keycloak-user-credentials,customUser.secretKeys.name=username,customUser.secretKeys.database=database,customUser.secretKeys.password=password"
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+              results:
+                - name: keycloak-url
+                  description: "Url for keycloak admin web (without protocol)"
+                - name: keycloak-credentials-secret
+                  description: "Name of secret containining credentials for keycloak admin user"
+                - name: postgres-credentials-secret
+                  description: "Name of secret containing credentials for postgres admin user"
+                - name: postgres-service-url
+                  description: "Name of service providing postgress access"
+              steps:
+                - name: create-postgres-secrets
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Starting generation of keycloak postgres secrets"
+
+                    # Create secret 'keycloak-postgres-postgres-credentials' if it doesn't exist yet
+                    if [ -z "$(oc get secret keycloak-postgres-postgres-credentials --ignore-not-found)" ]; then
+                      echo "Creating secret 'keycloak-postgres-postgres-credentials'"
+                      postgres_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
+                      oc create secret generic keycloak-postgres-postgres-credentials --from-literal=postgres-password="${postgres_password}"
+                    else
+                      echo "Secret 'keycloak-postgres-postgres-credentials' already exists. Skipping…"
+                    fi
+
+                    echo "keycloak-postgres-postgres-credentials" | tee $(results.postgres-credentials-secret.path)
+
+                    # Create secret 'keycloak-postgres-keycloak-user-credentials' if it doesn't exist yet
+                    if [ -z "$(oc get secret keycloak-postgres-keycloak-user-credentials --ignore-not-found)" ]; then
+                      echo "Creating secret 'keycloak-postgres-keycloak-user-credentials'"
+                      keycloak_user_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
+                      oc create secret generic keycloak-postgres-keycloak-user-credentials --from-literal=username=keycloak --from-literal=database=keycloak --from-literal=password="${keycloak_user_password}"
+                    else
+                      echo "Secret 'keycloak-postgres-keycloak-user-credentials' already exists. Skipping…"
+                    fi
+
+
+                - name: install-postgres
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Starting Helm installation..."
+
+                    # Build helm install command
+                    HELM_CMD="helm install $(params.postgres-release-name) $(params.postgres-chart-name) --wait --timeout 10m0s"
+
+                    # Add version if specified
+                    if [ -n "$(params.postgres-chart-version)" ]; then
+                      HELM_CMD="$HELM_CMD --version $(params.postgres-chart-version)"
+                    fi
+
+                    # Add set values if specified
+                    if [ -n "$(params.postgres-set-values)" ]; then
+                      HELM_CMD="$HELM_CMD --set $(params.postgres-set-values)"
+                    fi
+
+                    # Execute helm install
+                    echo "Executing: $HELM_CMD"
+                    eval $HELM_CMD
+
+                    # build service string
+                    PGNS=$(oc get service $(params.postgres-release-name) -o jsonpath='{.metadata.namespace}')
+                    echo "$(params.postgres-release-name).${PGNS}.svc.cluster.local" | tee $(results.postgres-service-url.path)
+
+                    echo "Helm installation completed successfully!"
+                  env:
+                    - name: HOME
+                      value: /tmp
+
+                - name: create-keycloak-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Starting generation of keycloak secret"
+
+                    # Create secret 'keycloak-credentials' if it doesn't exist yet
+                    KC_CRED_SECRET="keycloak-credentials"
+                    if [ -z "$(oc get secret $KC_CRED_SECRET --ignore-not-found)" ]; then
+                      echo "Creating secret $KC_CRED_SECRET"
+                      admin_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
+                      oc create secret generic $KC_CRED_SECRET --from-literal=admin-password="${admin_password}"
+                    else
+                      echo "Secret $KC_CRED_SECRET already exists. Skipping…"
+                    fi
+
+                    echo -n $KC_CRED_SECRET > $(results.keycloak-credentials-secret.path)
+
+                - name: install-keycloak-chart
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Starting Helm installation of keycloak..."
+                    active_project="$(oc get secret keycloak-postgres-keycloak-user-credentials -o jsonpath="{.metadata.namespace}")"
+                    echo "Assuming current namespace is $active_project"
+
+                    # Build helm install command
+                    HELM_CMD="helm install $(params.keycloak-release-name) $(params.keycloak-chart-name) --wait --timeout 10m0s"
+
+                    # Add version if specified
+                    if [ -n "$(params.keycloak-chart-version)" ]; then
+                      HELM_CMD="$HELM_CMD --version $(params.keycloak-chart-version)"
+                    fi
+
+                    # Execute helm install
+                    echo "Executing: $HELM_CMD"
+                    eval '$HELM_CMD --values - << EOF
+                    # values-external-secret.yaml
+                    keycloak:
+                      existingSecret: "keycloak-credentials"
+                      secretKeys:
+                        adminPasswordKey: "admin-password"
+                      production: true
+                      proxyHeaders: "xforwarded"
+
+                    database:
+                      type: "postgres"
+                      host: "$(params.postgres-release-name).${active_project}.svc.cluster.local"
+                      name: "keycloak"
+                      existingSecret: "keycloak-postgres-keycloak-user-credentials"
+                      secretKeys:
+                        passwordKey: "password"
+                        usernameKey: "username"
+
+                    # Disable embedded databases
+                    postgres:
+                      enabled: false
+                    mariadb:
+                      enabled: false
+
+                    # Create dsw realm
+                    realm:
+                      import: true
+                      configFile: |
+                        {
+                          "realm": "$(params.keycloak-dsw-realm-name)",
+                          "enabled": true
+                        }
+
+                    resources:
+                      requests:
+                        memory: "1Gi"
+                        cpu: "500m"
+                      limits:
+                        memory: "2Gi"
+                        cpu: "1000m"
+                    EOF'
+
+                - name: create-keycloak-route
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Createing keycloak route"
+                    oc create route edge dsw-auth --service="$(params.keycloak-release-name)-keycloak" --port=8080
+
+                    oc get route dsw-auth -o jsonpath='{.spec.host}' | tee $(results.keycloak-url.path)
           runAfter:
               - bootstrap
+
         - name: create-mandatory-config
           params:
-              - name: default-step-image
-                value: "$(params.default-step-image)"
-              - name: cluster-app-url
-                value: "$(tasks.bootstrap.results.cluster-app-url)"
-              - name: keycloak-dsw-realm-name
-                value: "$(params.keycloak-dsw-realm-name)"
-              - name: keycloak-credentials-secret
-                value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
-              - name: keycloak-url
-                value: "$(tasks.install-keycloak.results.keycloak-url)"
-          taskRef:
-              name: create-mandatory-config
-          workspaces:
-              - name: shared-wksp
-                workspace: global-wksp
+                - name: default-step-image
+                  value: "$(params.default-step-image)"
+                - name: cluster-app-url
+                  value: "$(tasks.bootstrap.results.cluster-app-url)"
+                - name: keycloak-dsw-realm-name
+                  value: "$(params.keycloak-dsw-realm-name)"
+                - name: keycloak-credentials-secret
+                  value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
+                - name: keycloak-url
+                  value: "$(tasks.install-keycloak.results.keycloak-url)"
+          taskSpec:
+              displayName: Create mandatory config
+              description: "Task to create some secrets that configure mandatory aspects of DSW"
+              workspaces:
+                  - name: shared-wksp
+                    description: |
+                      Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+                - name: keycloak-credentials-secret
+                  type: string
+                  description: "Name of the secret holding the admin credentials for keycloak"
+                  default: "keycloak-credentials"
+                - name: keycloak-url
+                  type: string
+                  description: "Url of keycloak admin host (without protocol)"
+              results:
+                  - name: cluster-app-url
+                    description: "Url (suffix) for services exposed by the cluster"
+              steps:
+                - name: create-iam-settings-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    # Create secret 'k5-iam-settings' if it doesn't exist yet
+                    if [ -z "$(oc get secret k5-iam-settings --ignore-not-found)" ]; then
+                      echo "Createing k5-iam-settings secret"
+                      oc create -f - << EOF
+                      kind: Secret
+                      apiVersion: v1
+                      metadata:
+                        name: k5-iam-settings
+                      stringData:
+                        hostname: "https://$(params.keycloak-url)"
+                        realm: "$(params.keycloak-dsw-realm-name)"
+                    EOF
+                    else
+                      echo "Secret k5-iam-settings already exists. Skipping creation…"
+                    fi
+                - name: create-iam-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Reading keycloak credentials from secret $(params.keycloak-credentials-secret)"
+                    KC_CRED_SECRET=$(params.keycloak-credentials-secret)
+                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}'|base64 -d)"
+
+                    # Create secret 'k5-iam-secret' if it doesn't exist yet
+                    if [ -z "$(oc get secret k5-iam-secret --ignore-not-found)" ]; then
+                      echo "Createing k5-iam-secret secret"
+                      oc create -f - << EOF
+                      kind: Secret
+                      apiVersion: v1
+                      metadata:
+                        name: k5-iam-secret
+                      stringData:
+                        adminUsername: "admin"
+                        adminPassword: "$KC_ADMIN_PW"
+                    EOF
+                    else
+                      echo "Secret k5-iam-secret already exists. Skipping creation…"
+                    fi
+
+                      workspaces:
+                            - name: shared-wksp
+                              workspace: global-wksp
         - name: install-dsw
           params:
               - name: default-step-image
@@ -105,8 +383,95 @@ spec:
                 value: "$(params.devops-model-chart-repo)"
               - name: devops-model-chart-version
                 value: "$(params.devops-model-chart-version)"
-          taskRef:
-              name: install-dsw
+          taskSpec:
+              displayName: Install DSW
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+                - name: keycloak-credentials-secret
+                  type: string
+                  description: "Name of the secret holding the admin credentials for keycloak"
+                  default: "keycloak-credentials"
+                - name: keycloak-url
+                  type: string
+                  description: "Url of keycloak admin host (without protocol)"
+                - name: devops-model-chart-repo
+                  type: string
+                  description: Fully qualified repo url where the dsw (ibm-devops-model) chart is published
+                  default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+                - name: devops-model-release-name
+                  type: string
+                  description: "Release name to use for helm install cmd of devops-mode-chart"
+                  default: "dsw"
+                - name: devops-model-chart-name
+                  type: string
+                  description: (Short) name of helm chart to install
+                  default: "ibm-devops-model"
+                - name: devops-model-chart-version
+                  type: string
+                  description: helm chart version to install
+                  default: 5.1.1
+                - name: cluster-app-url
+                  type: string
+                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+              steps:
+                - name: install-dsw-chart
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Adding repo"
+                    helm version
+                    HELM_REPO_NAME=ibm-devops-repo
+                    helm repo add $HELM_REPO_NAME $(params.devops-model-chart-repo)
+                    helm repo update
+                    helm search repo
+
+
+                    echo "Starting Helm installation..."
+
+                    # Build helm install command
+                    HELM_CMD="helm install $(params.devops-model-release-name) ${HELM_REPO_NAME}/$(params.devops-model-chart-name) --wait --timeout 10m0s"
+
+                    # Add version if specified
+                    if [ -n "$(params.devops-model-chart-version)" ]; then
+                      HELM_CMD="$HELM_CMD --version $(params.devops-model-chart-version)"
+                    fi
+
+                    # Execute helm install
+                    echo "Executing: $HELM_CMD"
+                    eval '$HELM_CMD --values - << EOF
+                    # value overrides as provided by MMe on January, 22nd 2026 (teams)
+                    global:
+                      domain: dsw$(params.cluster-app-url)
+                      rationalLicenseKeyServer: "@baw-isf.knowis.net"                     # TODO: change to your server
+                      image:
+                        registry: "de.icr.io/isw_release"
+                        privateRegistry: null
+                        prefix: ''
+                      platform:
+                        enabled: false
+                      k5:
+                        identity:
+                          secretName: "$(params.keycloak-credentials-secret)"
+                          url: "https://$(params.keycloak-url)"
+                          realm: $(params.keycloak-dsw-realm-name)
+                        secrets:
+                          mongodb: "k5-designer-mongodb"
+                          mongodbKey: "connectionString"
+                          mongodbConnectionString: "mongodb://root:pw@mongodb.namespace.svc.cluster.local:27017/admin?ssl=false"   # TODO: change to your mongodb connection string
+                          truststore: "k5-hub-truststore"
+                    EOF'
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
