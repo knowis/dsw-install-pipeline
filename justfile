@@ -10,10 +10,15 @@ cleanup:
     oc delete task,pipeline,pipelinerun,taskrun --all
 
     # delete all helm releases
-    helm uninstall $(helm list -q)
+    helm uninstall $(helm list -q -n techzone-dsw-support) -n techzone-dsw-support
+    helm uninstall $(helm list -q -n techzone-dsw-tools) -n techzone-dsw-tools
 
-    oc delete persistentvolumeclaim,route --all
-    oc delete secret --field-selector type=Opaque
+    oc delete persistentvolumeclaim,route --all -n techzone-dsw-tools
+    oc delete persistentvolumeclaim,route --all -n techzone-dsw-support
+    oc delete secret --field-selector type=Opaque -n techzone-dsw-tools
+    oc delete secret --field-selector type=Opaque -n techzone-dsw-support
+
+    oc delete namespace -l app.kubernetes.io/created-by=dsw-techzone-tekton-installer
 
 run-pipeline:
     oc apply -f tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml

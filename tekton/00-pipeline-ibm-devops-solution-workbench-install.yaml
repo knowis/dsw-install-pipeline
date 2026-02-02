@@ -20,6 +20,10 @@ spec:
           type: string
           description: "DSW chart version to use"
           default: "5.1.1"
+        - name: install-namespace-prefix
+          type: string
+          description: Prefix to use for namespaces created to install DSW into
+          default: techzone-dsw
     workspaces:
         - name: global-wksp
     tasks:
@@ -59,12 +63,73 @@ spec:
                     oc delete route $SVC_NAME
 
                     echo "Deleted dummy route $SVC_NAME again"
+        - name: create-install-namespaces
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: install-namespace-prefix
+                value: $(params.install-namespace-prefix)
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: Create install namespaces
+              description: "Task to create two namespaces to install DSW into: one for the product itself and one for its dependencies"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                  - name: default-step-image
+                    type: string
+                    description: Image to use to execute step
+                  - name: install-namespace-prefix
+                    type: string
+                    description: Prefix to use for namespaces created to install DSW into
+                    default: techzone-dsw
+              results:
+                  - name: tool-namespace
+                    description: "Name of the namespace (project) that DSW will be installed into"
+                  - name: support-namespace
+                    description: "Name of the namespace (project) that DSW dependencies like e.g. Keycloak will be installed into"
+              steps:
+                - name: create-tool-namespace
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace-prefix)-tools
+                    echo "Createing $NS_NAME namespace"
+                    oc new-project $NS_NAME --display-name="DSW Tool Installation Namespace" --description="Namespace that DevOps Solution Workbench services are deployed into"
+
+                    oc label namespace $NS_NAME app.kubernetes.io/created-by="dsw-techzone-tekton-installer"
+
+                    echo "Namespace $NS_NAME created successfully!"
+                    echo -n $NS_NAME > $(results.tool-namespace.path)
+                - name: create-support-namespace
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace-prefix)-support
+                    echo "Createing $NS_NAME namespace"
+                    oc new-project $NS_NAME --display-name="DSW Tool Support Namespace" --description="Namespace that DevOps Solution Workbench dependencies (like Keycloak) are deployed into"
+
+                    oc label namespace $NS_NAME app.kubernetes.io/created-by="dsw-techzone-tekton-installer"
+
+                    echo "Namespace $NS_NAME created successfully!"
+                    echo -n $NS_NAME > $(results.support-namespace.path)
+
         - name: install-keycloak
           params:
               - name: default-step-image
                 value: "$(params.default-step-image)"
               - name: keycloak-dsw-realm-name
                 value: "$(params.keycloak-dsw-realm-name)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.support-namespace)"
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
@@ -111,6 +176,9 @@ spec:
                   type: string
                   description: "Name of realm in keycloak to be used for authenticating to DSW"
                   default: "dsw"
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
               results:
                 - name: keycloak-url
                   description: "Url for keycloak admin web (without protocol)"
@@ -127,13 +195,15 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
-                    echo "Starting generation of keycloak postgres secrets"
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Starting generation of keycloak postgres secrets in namespace $NS_NAME"
 
                     # Create secret 'keycloak-postgres-postgres-credentials' if it doesn't exist yet
-                    if [ -z "$(oc get secret keycloak-postgres-postgres-credentials --ignore-not-found)" ]; then
+                    if [ -z "$(oc get secret keycloak-postgres-postgres-credentials --ignore-not-found -n $NS_NAME)" ]; then
                       echo "Creating secret 'keycloak-postgres-postgres-credentials'"
                       postgres_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
-                      oc create secret generic keycloak-postgres-postgres-credentials --from-literal=postgres-password="${postgres_password}"
+                      oc create secret generic keycloak-postgres-postgres-credentials --from-literal=postgres-password="${postgres_password}" -n $NS_NAME
                     else
                       echo "Secret 'keycloak-postgres-postgres-credentials' already exists. Skipping…"
                     fi
@@ -141,10 +211,10 @@ spec:
                     echo "keycloak-postgres-postgres-credentials" | tee $(results.postgres-credentials-secret.path)
 
                     # Create secret 'keycloak-postgres-keycloak-user-credentials' if it doesn't exist yet
-                    if [ -z "$(oc get secret keycloak-postgres-keycloak-user-credentials --ignore-not-found)" ]; then
+                    if [ -z "$(oc get secret keycloak-postgres-keycloak-user-credentials --ignore-not-found -n $NS_NAME)" ]; then
                       echo "Creating secret 'keycloak-postgres-keycloak-user-credentials'"
                       keycloak_user_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
-                      oc create secret generic keycloak-postgres-keycloak-user-credentials --from-literal=username=keycloak --from-literal=database=keycloak --from-literal=password="${keycloak_user_password}"
+                      oc create secret generic keycloak-postgres-keycloak-user-credentials --from-literal=username=keycloak --from-literal=database=keycloak --from-literal=password="${keycloak_user_password}" -n $NS_NAME
                     else
                       echo "Secret 'keycloak-postgres-keycloak-user-credentials' already exists. Skipping…"
                     fi
@@ -156,10 +226,12 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
-                    echo "Starting Helm installation..."
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Starting Helm installation in namespace $NS_NAME..."
 
                     # Build helm install command
-                    HELM_CMD="helm install $(params.postgres-release-name) $(params.postgres-chart-name) --wait --timeout 10m0s"
+                    HELM_CMD="helm install $(params.postgres-release-name) $(params.postgres-chart-name) --wait --timeout 10m0s -n $NS_NAME"
 
                     # Add version if specified
                     if [ -n "$(params.postgres-chart-version)" ]; then
@@ -176,8 +248,7 @@ spec:
                     eval $HELM_CMD
 
                     # build service string
-                    PGNS=$(oc get service $(params.postgres-release-name) -o jsonpath='{.metadata.namespace}')
-                    echo "$(params.postgres-release-name).${PGNS}.svc.cluster.local" | tee $(results.postgres-service-url.path)
+                    echo "$(params.postgres-release-name).${NS_NAME}.svc.cluster.local" | tee $(results.postgres-service-url.path)
 
                     echo "Helm installation completed successfully!"
                   env:
@@ -190,14 +261,16 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
-                    echo "Starting generation of keycloak secret"
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Starting generation of keycloak secret in namespace $NS_NAME"
 
                     # Create secret 'keycloak-credentials' if it doesn't exist yet
                     KC_CRED_SECRET="keycloak-credentials"
-                    if [ -z "$(oc get secret $KC_CRED_SECRET --ignore-not-found)" ]; then
+                    if [ -z "$(oc get secret $KC_CRED_SECRET --ignore-not-found -n $NS_NAME)" ]; then
                       echo "Creating secret $KC_CRED_SECRET"
                       admin_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | head -c 15)
-                      oc create secret generic $KC_CRED_SECRET --from-literal=admin-password="${admin_password}"
+                      oc create secret generic $KC_CRED_SECRET --from-literal=admin-password="${admin_password}" -n $NS_NAME
                     else
                       echo "Secret $KC_CRED_SECRET already exists. Skipping…"
                     fi
@@ -210,12 +283,12 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
-                    echo "Starting Helm installation of keycloak..."
-                    active_project="$(oc get secret keycloak-postgres-keycloak-user-credentials -o jsonpath="{.metadata.namespace}")"
-                    echo "Assuming current namespace is $active_project"
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Starting Helm installation of keycloak in namespace $NS_NAME ..."
 
                     # Build helm install command
-                    HELM_CMD="helm install $(params.keycloak-release-name) $(params.keycloak-chart-name) --wait --timeout 10m0s"
+                    HELM_CMD="helm install $(params.keycloak-release-name) $(params.keycloak-chart-name) --wait --timeout 10m0s -n $NS_NAME"
 
                     # Add version if specified
                     if [ -n "$(params.keycloak-chart-version)" ]; then
@@ -235,7 +308,7 @@ spec:
 
                     database:
                       type: "postgres"
-                      host: "$(params.postgres-release-name).${active_project}.svc.cluster.local"
+                      host: "$(params.postgres-release-name).${NS_NAME}.svc.cluster.local"
                       name: "keycloak"
                       existingSecret: "keycloak-postgres-keycloak-user-credentials"
                       secretKeys:
@@ -272,10 +345,12 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
-                    echo "Createing keycloak route"
-                    oc create route edge dsw-auth --service="$(params.keycloak-release-name)-keycloak" --port=8080
+                    NS_NAME=$(params.install-namespace)
 
-                    oc get route dsw-auth -o jsonpath='{.spec.host}' | tee $(results.keycloak-url.path)
+                    echo "Createing keycloak route in namespace $NS_NAME"
+                    oc create route edge dsw-auth --service="$(params.keycloak-release-name)-keycloak" --port=8080 -n $NS_NAME
+
+                    oc get route dsw-auth -o jsonpath='{.spec.host}' -n $NS_NAME | tee $(results.keycloak-url.path)
           runAfter:
               - bootstrap
 
@@ -291,6 +366,10 @@ spec:
                   value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
                 - name: keycloak-url
                   value: "$(tasks.install-keycloak.results.keycloak-url)"
+                - name: install-namespace
+                  value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+                - name: support-namespace
+                  value: "$(tasks.create-install-namespaces.results.support-namespace)"
           taskSpec:
               displayName: Create mandatory config
               description: "Task to create some secrets that configure mandatory aspects of DSW"
@@ -313,6 +392,12 @@ spec:
                 - name: keycloak-url
                   type: string
                   description: "Url of keycloak admin host (without protocol)"
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
+                - name: support-namespace
+                  type: string
+                  description: "Namespace where dependencies like Keycloak are installed"
               results:
                   - name: cluster-app-url
                     description: "Url (suffix) for services exposed by the cluster"
@@ -323,14 +408,17 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
+                    NS_NAME=$(params.install-namespace)
+
                     # Create secret 'k5-iam-settings' if it doesn't exist yet
-                    if [ -z "$(oc get secret k5-iam-settings --ignore-not-found)" ]; then
+                    if [ -z "$(oc get secret k5-iam-settings --ignore-not-found -n $NS_NAME)" ]; then
                       echo "Createing k5-iam-settings secret"
                       oc create -f - << EOF
                       kind: Secret
                       apiVersion: v1
                       metadata:
                         name: k5-iam-settings
+                        namespace: $NS_NAME
                       stringData:
                         hostname: "https://$(params.keycloak-url)"
                         realm: "$(params.keycloak-dsw-realm-name)"
@@ -344,9 +432,13 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
+                    NS_NAME=$(params.install-namespace)
+                    NS_SUPPORT_NAME=$(params.support-namespace)
+
+
                     echo "Reading keycloak credentials from secret $(params.keycloak-credentials-secret)"
                     KC_CRED_SECRET=$(params.keycloak-credentials-secret)
-                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}'|base64 -d)"
+                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_SUPPORT_NAME|base64 -d)"
 
                     # Create secret 'k5-iam-secret' if it doesn't exist yet
                     if [ -z "$(oc get secret k5-iam-secret --ignore-not-found)" ]; then
@@ -356,6 +448,7 @@ spec:
                       apiVersion: v1
                       metadata:
                         name: k5-iam-secret
+                        namespace: $NS_NAME
                       stringData:
                         adminUsername: "admin"
                         adminPassword: "$KC_ADMIN_PW"
@@ -383,6 +476,8 @@ spec:
                 value: "$(params.devops-model-chart-repo)"
               - name: devops-model-chart-version
                 value: "$(params.devops-model-chart-version)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.tool-namespace)"
           taskSpec:
               displayName: Install DSW
               workspaces:
@@ -423,12 +518,17 @@ spec:
                 - name: cluster-app-url
                   type: string
                   description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
               steps:
                 - name: install-dsw-chart
                   image: "$(params.default-step-image)"
                   script: |
                     #!/usr/bin/bash
                     set -e
+
+                    NS_NAME=$(params.install-namespace)
 
                     echo "Adding repo"
                     helm version
@@ -441,7 +541,7 @@ spec:
                     echo "Starting Helm installation..."
 
                     # Build helm install command
-                    HELM_CMD="helm install $(params.devops-model-release-name) ${HELM_REPO_NAME}/$(params.devops-model-chart-name) --wait --timeout 10m0s"
+                    HELM_CMD="helm install $(params.devops-model-release-name) ${HELM_REPO_NAME}/$(params.devops-model-chart-name) --wait --timeout 10m0s -n $NS_NAME"
 
                     # Add version if specified
                     if [ -n "$(params.devops-model-chart-version)" ]; then
