@@ -27,22 +27,38 @@ spec:
           params:
               - name: default-step-image
                 value: "$(params.default-step-image)"
-          taskRef:
-              name: bootstrap
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
-        - name: test-task
-          params:
-              - name: default-step-image
-                value: "$(params.default-step-image)"
-              - name: cluster-app-url
-                value: "$(tasks.bootstrap.results.cluster-app-url)"
-          taskRef:
-              name: test-task
-          workspaces:
-              - name: shared-wksp
-                workspace: global-wksp
+          taskSpec:
+              displayName: bootstrap
+              description: "Task to determine some global facts required by multiple tasks in the pipeline"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+              results:
+                  - name: cluster-app-url
+                    description: "Url (suffix) for services exposed by the cluster"
+              steps:
+                - name: determine-cluster-app-host
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Createing dummy route to extract apps url from"
+                    SVC_NAME="dummy-route-$(tr -dc 'a-z0-9' < /dev/random | head -c 5)"
+                    oc create route edge --service=$SVC_NAME --port=34567
+                    oc get route $SVC_NAME -o jsonpath='{.spec.host}'|sed -nE 's/^.*\.(apps\..*$)/\1/p' | tee $(results.cluster-app-url.path)
+
+                    oc delete route $SVC_NAME
+
+                    echo "Deleted dummy route $SVC_NAME again"
         - name: install-keycloak
           params:
               - name: default-step-image
