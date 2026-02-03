@@ -18,11 +18,11 @@ The DSW install pipeline focuses on installing the design-time parts of DSW firs
 
 - create namespace(s) ✔️
 - establish some pipeline global facts like cluster url (script) ✔️
-- create pull-secret(s) using IBM vault/key-manager
+- create pull-secret(s) using IBM vault/key-manager 🚀 
 - install keycloak (script & helm) ✔️
 - install schema registry Apicurio (helm?)
 - create mandatory configuration secrets (script) 🚀
 - install dsw (script & helm) 🚀
-- install gitea/forgejo/gitlab
+- install gitea/forgejo/gitlab 🚀
 - fork, clone resources/assets needed for a user to get started easily
 - Create user, configure user and provide output about how and where to login in the pipeline

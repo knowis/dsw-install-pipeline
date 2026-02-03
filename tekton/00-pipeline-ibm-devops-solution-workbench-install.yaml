@@ -24,6 +24,10 @@ spec:
           type: string
           description: Prefix to use for namespaces created to install DSW into
           default: techzone-dsw
+        - name: execute-install-dsw
+          type: string
+          description: "Execute the install-dsw task"
+          default: true
     workspaces:
         - name: global-wksp
     tasks:
@@ -535,6 +539,10 @@ spec:
                 value: "$(tasks.create-install-namespaces.results.tool-namespace)"
           taskSpec:
               displayName: Install DSW
+              when:
+                - input: "$(params.execute-install-dsw)"
+                  operator: in
+                  values: [true]
               workspaces:
                 - name: shared-wksp
                   description: |

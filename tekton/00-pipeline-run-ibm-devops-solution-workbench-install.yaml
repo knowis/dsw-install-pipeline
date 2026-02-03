@@ -5,6 +5,9 @@ metadata:
 spec:
   pipelineRef:
     name: dsw-install
+  params:
+    - name: execute-install-dsw
+      value: false
   workspaces:
       - name: global-wksp
         volumeClaimTemplate:

@@ -21,6 +21,17 @@ spec:
       type: string
       description: "Version of the helm chart that the operator should install. Needs to be compatible with the operator version."
       default: 9.8.2
+    - name: keycloak-dsw-realm-name
+      type: string
+      description: "Name of realm in keycloak to be used for authenticating to DSW"
+      default: "dsw"
+    - name: keycloak-credentials-secret
+      type: string
+      description: "Name of the secret holding the admin credentials for keycloak"
+      default: "keycloak-credentials"
+    - name: keycloak-url
+      type: string
+      description: "Url of keycloak admin host (without protocol)"
   results:
     - name: release-status
       description: "The status of the Helm release"
