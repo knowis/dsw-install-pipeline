@@ -21,5 +21,6 @@ cleanup:
     oc delete namespace -l app.kubernetes.io/created-by=dsw-techzone-tekton-installer
 
 run-pipeline:
+    oc apply -f tekton/ibm-cloud-secrets-manager-get.yaml
     oc apply -f tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml
     oc create -f tekton/00-pipeline-run-ibm-devops-solution-workbench-install.yaml

@@ -121,6 +121,62 @@ spec:
 
                     echo "Namespace $NS_NAME created successfully!"
                     echo -n $NS_NAME > $(results.support-namespace.path)
+        - name: obtain-entitled-registry-token
+          retries: 3
+          params:
+            - name: KEY_ID
+              value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+            - name: SECRETS_MANAGER_ENDPOINT_URL
+              value: >-
+                https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+          taskRef:
+            kind: Task
+            name: ibmcloud-secrets-manager-get
+        - name: create-pull-secret
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: ibm-entitlement-token
+                value: "$(tasks.obtain-entitled-registry-token.results.secret-value)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: Create IBM entitled registry pull secret
+              description: "Task to determine some global facts required by multiple tasks in the pipeline"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: pull-secret-name
+                  type: string
+                  description: "Pull secret allowing images from ibm entitled registry (*.icr.io) to be pulled"
+                  default: ibm-entitlement-key1
+                - name: ibm-entitlement-token
+                  type: string
+                  description: "Token that can be used to authenticate against entitled registry (cp.icr.io)"
+                - name: entitled-registry-url
+                  type: string
+                  description: "URL of entitled registry to pull (DSW) images from"
+                  default: cp.icr.io
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install secret into"
+              steps:
+                - name: create-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "creating entitled registry pull secret"
+                    oc create secret docker-registry $(params.pull-secret-name) --docker-username=iamapikey --docker-password=$(params.pull-secret-name) --docker-email='' --docker-server=$(params.entitled-registry-url) -n $(params.install-namespace)
 
         - name: install-keycloak
           params:
@@ -353,7 +409,6 @@ spec:
                     oc get route dsw-auth -o jsonpath='{.spec.host}' -n $NS_NAME | tee $(results.keycloak-url.path)
           runAfter:
               - bootstrap
-
         - name: create-mandatory-config
           params:
                 - name: default-step-image
@@ -556,9 +611,9 @@ spec:
                       domain: dsw$(params.cluster-app-url)
                       rationalLicenseKeyServer: "@baw-isf.knowis.net"                     # TODO: change to your server
                       image:
-                        registry: "de.icr.io/isw_release"
-                        privateRegistry: null
-                        prefix: ''
+                        registry: de.icr.io/isw_release
+                        privateRegistry: ""
+                        prefix: ""
                       platform:
                         enabled: false
                       k5:
