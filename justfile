@@ -24,3 +24,7 @@ run-pipeline:
     oc apply -f tekton/ibm-cloud-secrets-manager-get.yaml
     oc apply -f tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml
     oc create -f tekton/00-pipeline-run-ibm-devops-solution-workbench-install.yaml
+
+run-gitlab-task:
+    oc apply -f tekton/install-gitlab.yaml
+    oc apply -f tekton/install-gitlab-run.yaml

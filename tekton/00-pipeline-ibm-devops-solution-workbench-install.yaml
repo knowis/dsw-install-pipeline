@@ -27,7 +27,7 @@ spec:
         - name: execute-install-dsw
           type: string
           description: "Execute the install-dsw task"
-          default: true
+          default: "true"
     workspaces:
         - name: global-wksp
     tasks:
@@ -537,12 +537,12 @@ spec:
                 value: "$(params.devops-model-chart-version)"
               - name: install-namespace
                 value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+          when:
+              - input: "$(params.execute-install-dsw)"
+                operator: in
+                values: ["true"]
           taskSpec:
               displayName: Install DSW
-              when:
-                - input: "$(params.execute-install-dsw)"
-                  operator: in
-                  values: [true]
               workspaces:
                 - name: shared-wksp
                   description: |

@@ -27,7 +27,7 @@ LABEL url="https://docs-devops-solution-workbench.knowis.net/"
 LABEL helm.version=${HELM_VERSION}
 LABEL openshift-cli.version=${OPENSHIFT_VERSION}
 
-RUN microdnf install -y wget
+RUN microdnf install -y wget jq sed
 COPY --from=builder /helm/linux-amd64/helm /usr/local/bin/
 COPY --from=builder /openshift-client/oc /usr/local/bin/
 COPY --from=builder /openshift-client/kubectl /usr/local/bin/
