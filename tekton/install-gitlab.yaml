@@ -10,6 +10,7 @@ spec:
     - name: install-namespace
       type: string
       description: "Namespace to install into"
+      default:
     - name: operator-name
       type: string
       description: "Name of the GitLab operator"
@@ -40,75 +41,6 @@ spec:
     - name: release-status
       description: "The status of the Helm release"
   steps:
-    - name: install-gitlab-operator
-      image: "$(params.default-step-image)"
-      script: |
-        #!/usr/bin/bash
-        set -e
-
-        OP_NAME=$(params.operator-name)
-        NS_INST=$(params.install-namespace)
-
-        echo "Beginning installation of GitLab via operator $OP_NAME in namespace $NS_INST"
-
-        # get details of latest ClusterServiceVersion in default channel
-        default_channel="$(oc get packagemanifests $OP_NAME -o jsonpath="{.status.defaultChannel}")"
-
-        echo "Using channel $default_channel"
-
-        latest_csv="$(oc get packagemanifests $OP_NAME -o jsonpath="{.status.channels[?(@.name=='${default_channel}')].entries[0].name}")"
-
-        echo "Using ClusterServiceVersion $latest_csv"
-
-        catalog_source="$(oc get packagemanifests $OP_NAME -o jsonpath={.status.catalogSource})"
-
-        catalog_source_namespace="$(oc get packagemanifests $OP_NAME -o jsonpath={.status.catalogSourceNamespace})"
-
-        # Create an OperatorGroup
-
-        oc create -f - << EOF
-        apiVersion: operators.coreos.com/v1
-        kind: OperatorGroup
-        metadata:
-          generateName: $NS_INST-
-          annotations:
-            olm.providedAPIs: GitLab.v1beta1.apps.gitlab.com
-          namespace: $NS_INST
-        spec:
-          targetNamespaces:
-            - $NS_INST
-          upgradeStrategy: Default
-        EOF
-
-        # Create a subscription
-
-        oc apply -f - << EOF
-        apiVersion: operators.coreos.com/v1alpha1
-        kind: Subscription
-        metadata:
-          labels:
-            operators.coreos.com/$OP_NAME.$NS_INST: ''
-          name: $OP_NAME
-          namespace: $NS_INST
-        spec:
-          channel: $default_channel
-          installPlanApproval: Manual
-          name: $OP_NAME
-          source: $catalog_source
-          sourceNamespace: $catalog_source_namespace
-          startingCSV: $latest_csv
-        EOF
-
-        # Approve Installplan
-        echo "Approving installplan"
-        oc get installplan -n $NS_INST
-
-        installplan_name="$(oc get installplan -o jsonpath="{.items[?(@.spec.clusterServiceVersionNames[0]=='$latest_csv')].metadata.name}" -n $NS_INST)"
-        oc patch installplan/$installplan_name --type merge --patch '{"spec":{"approved": true}}' -n $NS_INST
-        #
-
-        echo "Installation of GitLab operator done"
-
     - name: create-oauth-secret
       image: "$(params.default-step-image)"
       script: |
@@ -127,162 +59,67 @@ spec:
         KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_INST|base64 -d)"
 
         echo "Creating keycloak client for GitLab in realm $KC_REALM"
+
         TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
           --header 'Content-Type: application/x-www-form-urlencoded' \
           --data-urlencode 'client_id=admin-cli' \
           --data-urlencode 'grant_type=password' \
           --data-urlencode 'username=admin' \
-          --data-urlencode 'password=$KC_ADMIN_PW' | jq -r '.access_token')
+          --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
 
         echo "Successfully fetched keycloak admin token"
 
-        CLIENT_ID=$(curl --silent -w '%header{location}' --request POST \
+        echo "calling https://$KC_URL/admin/realms/$KC_REALM/clients"
+
+        curl -v  --request POST \
           --url https://$KC_URL/admin/realms/$KC_REALM/clients \
           --header 'content-type: application/json' \
           --header "Authorization: Bearer $TOKEN" \
-          --data '{
-          "protocol": "openid-connect",
-          "clientId": "$GL_CLIENT",
-          "enabled": true,
-          "publicClient": false,
-          "standardFlowEnabled": true,
-          "serviceAccountsEnabled": false,
-          "directAccessGrantsEnabled": true,
-          "rootUrl": "https://$GL_PREFIX-gitlab.$APP_URL",
-          "redirectUris": [
-            "https://$GL_PREFIX-gitlab.$APP_URL/*"
+          --data "{
+          \"protocol\": \"openid-connect\",
+          \"clientId\": \"$GL_CLIENT\",
+          \"enabled\": true,
+          \"publicClient\": false,
+          \"standardFlowEnabled\": true,
+          \"serviceAccountsEnabled\": false,
+          \"directAccessGrantsEnabled\": true,
+          \"rootUrl\": \"https://$GL_PREFIX-gitlab.$APP_URL\",
+          \"redirectUris\": [
+            \"https://$GL_PREFIX-gitlab.$APP_URL/*\"
           ]
-        }' | sed 's#.*/##')
+        }"
 
         echo "Successfully created gitlab client in realm $KC_REALM"
 
-        KCC_SECRET=$(curl --silent --request GET \
-          --url https://$KC_URL/admin/realms/$KC_REALM/clients/$CLIENT_ID \
-          --header "Authorization: Bearer $TOKEN" | jq -r '.secret')
+        # KCC_SECRET=$(curl --silent --request GET \
+        #   --url https://$KC_URL/admin/realms/$KC_REALM/clients/$CLIENT_ID \
+        #   --header "Authorization: Bearer $TOKEN" | jq -r '.secret')
 
-        echo "Creating secret keycloak-oauth2 to configure openid for GitLab"
+        # echo "Creating secret keycloak-oauth2 to configure openid for GitLab"
 
-        oc create -f - << EOF
-        kind: Secret
-        apiVersion: v1
-        metadata:
-          name: keycloak-oauth2
-          namespace: $NS_INST
-        stringData:
-          provider: |
-            name: "openid_connect"
-            label: "Keycloak"
-            args:
-              name: "openid_connect"
-              scope: ["openid", "profile", "email"]
-              response_type: "code"
-              issuer:  "https://$KC_URL/realms/$KC_REALM"
-              client_auth_method: "query"
-              discovery: true
-              uid_field: "preferred_username"
-              pkce: true
-              client_options:
-                identifier: "gitlab"
-                secret: "$KCC_SECRET"
-                redirect_uri: "https://$GL_PREFIX-gitlab.$APP_URL/users/auth/openid_connect/callback"
-        EOF
+        # oc create -f - << EOF
+        # kind: Secret
+        # apiVersion: v1
+        # metadata:
+        #   name: keycloak-oauth2
+        #   namespace: $NS_INST
+        # stringData:
+        #   provider: |
+        #     name: "openid_connect"
+        #     label: "Keycloak"
+        #     args:
+        #       name: "openid_connect"
+        #       scope: ["openid", "profile", "email"]
+        #       response_type: "code"
+        #       issuer:  "https://$KC_URL/realms/$KC_REALM"
+        #       client_auth_method: "query"
+        #       discovery: true
+        #       uid_field: "preferred_username"
+        #       pkce: true
+        #       client_options:
+        #         identifier: "gitlab"
+        #         secret: "$KCC_SECRET"
+        #         redirect_uri: "https://$GL_PREFIX-gitlab.$APP_URL/users/auth/openid_connect/callback"
+        # EOF
 
-
-    - name: create-gitlab-instance
-      image: "$(params.default-step-image)"
-      script: |
-        #!/usr/bin/bash
-        set -e
-
-        NS_INST=$(params.install-namespace)
-        APP_URL=$(params.cluster-app-url)
-        GL_PREFIX=$(params.instance-prefix)
-
-        oc create -f - << EOF
-        apiVersion: apps.gitlab.com/v1beta1
-        kind: GitLab
-        metadata:
-          name: gitlab
-          namespace: $NS_INST
-        spec:
-          chart:
-            values:
-              certmanager:
-                install: false
-              gitlab:
-                migrations:
-                  enabled: true
-                toolbox:
-                  antiAffinityLabels:
-                    matchLabels:
-                      app: gitaly
-                  replicas: 1
-              global:
-                appConfig:
-                  omniauth:
-                    enabled: true
-                    autoLinkSamlUser: false
-                    providers:
-                      - key: provider
-                        secret: keycloak-oauth2
-                    syncProfileAttributes:
-                      - email
-                    autoSignInWithProvider: null
-                    syncProfileFromProvider:
-                      - openid_connect
-                    allowBypassTwoFactor: []
-                    allowSingleSignOn:
-                      - openid_connect
-                    autoLinkUser: []
-                    externalProviders: []
-                    autoLinkLdapUser: false
-                    blockAutoCreatedUsers: true
-                gitaly:
-                  authToken: {}
-                  enabled: true
-                  external: []
-                  internal:
-                    names:
-                      - default
-                  service:
-                    externalPort: 8075
-                    internalPort: 8075
-                    name: gitaly
-                    type: ClusterIP
-                hosts:
-                  domain: $APP_URL
-                  https: true
-                  minio:
-                    name: $GL_PREFIX-minio-gitlab.$APP_URL
-                  smartcard: {}
-                  hostSuffix: null
-                  gitlab:
-                    name: $GL_PREFIX-gitlab.$APP_URL
-                  tls: {}
-                  registry:
-                    name: $GL_PREFIX-registry.$APP_URL
-                  kas:
-                    name: $GL_PREFIX-kas.$APP_URL
-                ingress:
-                  annotations:
-                    route.openshift.io/termination: edge
-                  class: openshift-default
-                  configureCertmanager: false
-                  tls:
-                    enabled: false
-                    secretName: gitlab-secrets
-                redis:
-                  auth:
-                    enabled: true
-              postgresql:
-                primary:
-                  extendedConfiguration: max_connections = 200
-              tls:
-                application:
-                  allowClusterRoles: true
-                  create: false
-                  links: []
-                externalPort: 8076
-                internalPort: 8076
-            version: $(params.gitlab-helm-chart-version)
-        EOF
+        # echo "Secret keycloak-oauth2 created"

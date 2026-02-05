@@ -8,6 +8,7 @@ cleanup:
     #!/usr/bin/env sh
     # delete tekton resources
     oc delete task,pipeline,pipelinerun,taskrun --all
+    oc delete gitlab --all -n techzone-dsw-support
 
     # delete all helm releases
     helm uninstall $(helm list -q -n techzone-dsw-support) -n techzone-dsw-support
