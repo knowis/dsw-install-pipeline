@@ -67,59 +67,75 @@ spec:
           --data-urlencode 'username=admin' \
           --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
 
-        echo "Successfully fetched keycloak admin token"
+        echo "Successfully fetched keycloak admin token $TOKEN"
 
         echo "calling https://$KC_URL/admin/realms/$KC_REALM/clients"
 
-        curl -v  --request POST \
+        cat << EOF > /tmp/client.json
+        {
+          "protocol": "openid-connect",
+          "clientId": "$GL_CLIENT",
+          "enabled": true,
+          "publicClient": false,
+          "standardFlowEnabled": true,
+          "serviceAccountsEnabled": false,
+          "directAccessGrantsEnabled": true,
+          "rootUrl": "https://$GL_PREFIX-gitlab.$APP_URL",
+          "redirectUris": [
+            "https://$GL_PREFIX-gitlab.$APP_URL/*"
+          ]
+        }
+        EOF
+
+
+        CLIENT_ID=$(curl -i  \
           --url https://$KC_URL/admin/realms/$KC_REALM/clients \
           --header 'content-type: application/json' \
           --header "Authorization: Bearer $TOKEN" \
-          --data "{
-          \"protocol\": \"openid-connect\",
-          \"clientId\": \"$GL_CLIENT\",
-          \"enabled\": true,
-          \"publicClient\": false,
-          \"standardFlowEnabled\": true,
-          \"serviceAccountsEnabled\": false,
-          \"directAccessGrantsEnabled\": true,
-          \"rootUrl\": \"https://$GL_PREFIX-gitlab.$APP_URL\",
-          \"redirectUris\": [
-            \"https://$GL_PREFIX-gitlab.$APP_URL/*\"
-          ]
-        }"
+          --data @/tmp/client.json | grep -i ^Location | sed 's#.*/##')
 
-        echo "Successfully created gitlab client in realm $KC_REALM"
+        echo "Successfully created gitlab client in realm $KC_REALM with ID $CLIENT_ID"
 
-        # KCC_SECRET=$(curl --silent --request GET \
-        #   --url https://$KC_URL/admin/realms/$KC_REALM/clients/$CLIENT_ID \
-        #   --header "Authorization: Bearer $TOKEN" | jq -r '.secret')
+        sleep 5
 
-        # echo "Creating secret keycloak-oauth2 to configure openid for GitLab"
+        echo "curl test for https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID}"
+        CLIENT_URL="https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID}"
+        curl --request GET \
+          --url $CLIENT_URL \
+          --header "Authorization: Bearer $TOKEN"
 
-        # oc create -f - << EOF
-        # kind: Secret
-        # apiVersion: v1
-        # metadata:
-        #   name: keycloak-oauth2
-        #   namespace: $NS_INST
-        # stringData:
-        #   provider: |
-        #     name: "openid_connect"
-        #     label: "Keycloak"
-        #     args:
-        #       name: "openid_connect"
-        #       scope: ["openid", "profile", "email"]
-        #       response_type: "code"
-        #       issuer:  "https://$KC_URL/realms/$KC_REALM"
-        #       client_auth_method: "query"
-        #       discovery: true
-        #       uid_field: "preferred_username"
-        #       pkce: true
-        #       client_options:
-        #         identifier: "gitlab"
-        #         secret: "$KCC_SECRET"
-        #         redirect_uri: "https://$GL_PREFIX-gitlab.$APP_URL/users/auth/openid_connect/callback"
-        # EOF
+        echo "curl real"
+        KCC_SECRET=$(curl --silent --request GET \
+          --url https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID} \
+          --header "Authorization: Bearer $TOKEN" | jq -r '.secret')
 
-        # echo "Secret keycloak-oauth2 created"
+        echo "secret is $KCC_SECRET"
+
+        echo "Creating secret keycloak-oauth2 to configure openid for GitLab"
+
+        oc create -f - << EOF
+        kind: Secret
+        apiVersion: v1
+        metadata:
+          name: keycloak-oauth2
+          namespace: $NS_INST
+        stringData:
+          provider: |
+            name: "openid_connect"
+            label: "Keycloak"
+            args:
+              name: "openid_connect"
+              scope: ["openid", "profile", "email"]
+              response_type: "code"
+              issuer:  "https://$KC_URL/realms/$KC_REALM"
+              client_auth_method: "query"
+              discovery: true
+              uid_field: "preferred_username"
+              pkce: true
+              client_options:
+                identifier: "gitlab"
+                secret: "$KCC_SECRET"
+                redirect_uri: "https://$GL_PREFIX-gitlab.$APP_URL/users/auth/openid_connect/callback"
+        EOF
+
+        echo "Secret keycloak-oauth2 created"
