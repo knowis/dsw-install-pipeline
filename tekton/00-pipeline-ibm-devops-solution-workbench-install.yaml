@@ -889,6 +889,8 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
+                    sleep 10
+
                     NS_INST=$(params.install-namespace)
                     APP_URL=$(params.cluster-app-url)
                     GL_PREFIX=$(params.instance-prefix)
