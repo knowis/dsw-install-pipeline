@@ -807,6 +807,7 @@ spec:
                     KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_INST|base64 -d)"
 
                     echo "Creating keycloak client for GitLab in realm $KC_REALM"
+
                     TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
                       --header 'Content-Type: application/x-www-form-urlencoded' \
                       --data-urlencode 'client_id=admin-cli' \
@@ -816,29 +817,41 @@ spec:
 
                     echo "Successfully fetched keycloak admin token"
 
-                    CLIENT_ID=$(curl --silent -I --request POST \
+                    echo "calling https://$KC_URL/admin/realms/$KC_REALM/clients to create new client $GL_CLIENT"
+
+                    cat << EOF > /tmp/client.json
+                    {
+                      "protocol": "openid-connect",
+                      "clientId": "$GL_CLIENT",
+                      "enabled": true,
+                      "publicClient": false,
+                      "standardFlowEnabled": true,
+                      "serviceAccountsEnabled": false,
+                      "directAccessGrantsEnabled": true,
+                      "rootUrl": "https://$GL_PREFIX-gitlab.$APP_URL",
+                      "redirectUris": [
+                        "https://$GL_PREFIX-gitlab.$APP_URL/*"
+                      ]
+                    }
+                    EOF
+
+
+                    CLIENT_ID=$(curl -i  \
                       --url https://$KC_URL/admin/realms/$KC_REALM/clients \
                       --header 'content-type: application/json' \
                       --header "Authorization: Bearer $TOKEN" \
-                      --data "{
-                      \"protocol\": \"openid-connect\",
-                      \"clientId\": \"$GL_CLIENT\",
-                      \"enabled\": true,
-                      \"publicClient\": false,
-                      \"standardFlowEnabled\": true,
-                      \"serviceAccountsEnabled\": false,
-                      \"directAccessGrantsEnabled\": true,
-                      \"rootUrl\": \"https://$GL_PREFIX-gitlab.$APP_URL\",
-                      \"redirectUris\": [
-                        \"https://$GL_PREFIX-gitlab.$APP_URL/*\"
-                      ]
-                    }" | grep -i ^Location: | cut -d: -f2- | sed 's/^ *\(.*\).*/\1/')
+                      --data @/tmp/client.json | grep -i ^Location | sed 's#.*/##' | tr -d "\n\r" )
 
-                    echo "Successfully created gitlab client in realm $KC_REALM"
+                    echo "Successfully created client $GL_CLIENT in realm $KC_REALM with ID $CLIENT_ID"
 
-                    KCC_SECRET=$(curl --silent --request GET \
-                      --url https://$KC_URL/admin/realms/$KC_REALM/clients/$CLIENT_ID \
+                    sleep 5
+
+                    CLIENT_URL="https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID}"
+
+                    KCC_SECRET=$(curl --silent --url https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID} \
                       --header "Authorization: Bearer $TOKEN" | jq -r '.secret')
+
+                    echo "Successfully retrieved client secret for $GL_CLIENT"
 
                     echo "Creating secret keycloak-oauth2 to configure openid for GitLab"
 

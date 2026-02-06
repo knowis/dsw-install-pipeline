@@ -67,9 +67,9 @@ spec:
           --data-urlencode 'username=admin' \
           --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
 
-        echo "Successfully fetched keycloak admin token $TOKEN"
+        echo "Successfully fetched keycloak admin token"
 
-        echo "calling https://$KC_URL/admin/realms/$KC_REALM/clients"
+        echo "calling https://$KC_URL/admin/realms/$KC_REALM/clients to create new client $GL_CLIENT"
 
         cat << EOF > /tmp/client.json
         {
@@ -92,24 +92,19 @@ spec:
           --url https://$KC_URL/admin/realms/$KC_REALM/clients \
           --header 'content-type: application/json' \
           --header "Authorization: Bearer $TOKEN" \
-          --data @/tmp/client.json | grep -i ^Location | sed 's#.*/##')
+          --data @/tmp/client.json | grep -i ^Location | sed 's#.*/##' | tr -d "\n\r" )
 
-        echo "Successfully created gitlab client in realm $KC_REALM with ID $CLIENT_ID"
+        echo "Successfully created client $GL_CLIENT in realm $KC_REALM with ID $CLIENT_ID"
 
         sleep 5
 
-        echo "curl test for https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID}"
         CLIENT_URL="https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID}"
-        curl --request GET \
-          --url $CLIENT_URL \
-          --header "Authorization: Bearer $TOKEN"
 
-        echo "curl real"
         KCC_SECRET=$(curl --silent --request GET \
           --url https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID} \
           --header "Authorization: Bearer $TOKEN" | jq -r '.secret')
 
-        echo "secret is $KCC_SECRET"
+        echo "Successfully retrieved client secret for $GL_CLIENT"
 
         echo "Creating secret keycloak-oauth2 to configure openid for GitLab"
 
