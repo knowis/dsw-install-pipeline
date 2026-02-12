@@ -701,7 +701,7 @@ spec:
                 - name: gitlab-helm-chart-version
                   type: string
                   description: "Version of the helm chart that the operator should install. Needs to be compatible with the operator version."
-                  default: 9.8.2
+                  default: 9.8.4
                 - name: keycloak-dsw-realm-name
                   type: string
                   description: "Name of realm in keycloak to be used for authenticating to DSW"
@@ -983,3 +983,199 @@ spec:
                             internalPort: 8076
                         version: $(params.gitlab-helm-chart-version)
                     EOF
+        - name: configure-users
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.support-namespace)"
+              - name: cluster-app-url
+                value: "$(tasks.bootstrap.results.cluster-app-url)"
+              - name: keycloak-dsw-realm-name
+                value: "$(params.keycloak-dsw-realm-name)"
+              - name: keycloak-credentials-secret
+                value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
+              - name: keycloak-url
+                value: "$(tasks.install-keycloak.results.keycloak-url)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: Configure users and permissions
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
+                - name: cluster-app-url
+                  type: string
+                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+                - name: keycloak-credentials-secret
+                  type: string
+                  description: "Name of the secret holding the admin credentials for keycloak"
+                  default: "keycloak-credentials"
+                - name: keycloak-url
+                  type: string
+                  description: "Url of keycloak admin host (without protocol)"
+              results:
+                - name: dsw-dev-username
+                  description: The username of the DSW developer user that gets created
+                - name: dsw-dev-password
+                  description: The password of the DSW developer user that gets created
+                - name: dsw-admin-username
+                  description: The username of the DSW admin user that gets created
+                - name: dsw-admin-password
+                  description: The password of the DSW admin user that gets created
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              steps:
+                - name: create-keycloak-users
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_INST=$(params.install-namespace)
+                    KC_URL=$(params.keycloak-url)
+                    KC_REALM=$(params.keycloak-dsw-realm-name)
+                    APP_URL=$(params.cluster-app-url)
+                    KC_CRED_SECRET=$(params.keycloak-credentials-secret)
+
+
+                    echo "*** Creating a DSW developer and admin user in keycloak ***"
+
+                    echo "Reading keycloak credentials from secret $KC_CRED_SECRET in namespace $NS_INST"
+                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_INST|base64 -d)"
+
+                    TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
+                      --header 'Content-Type: application/x-www-form-urlencoded' \
+                      --data-urlencode 'client_id=admin-cli' \
+                      --data-urlencode 'grant_type=password' \
+                      --data-urlencode 'username=admin' \
+                      --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
+
+                    echo "Successfully fetched keycloak admin token"
+
+                    echo "Fetching realm roles"
+
+                    REALM_ROLES=$(curl --request GET \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/roles \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN")
+
+                    echo "Realm roles are $(echo $REALM_ROLES | jq)"
+
+                    ADMIN_ROLES=$(echo $REALM_ROLES | jq  '[.[] | select (.name == "dc_developer" or .name == "sr-admin" or .name == "sr-developer" or .name == "tm_admin" or .name == "dc_analyst" or .name == "cm_admin" or .name == "dc_admin" or .name == "sr-readonly" )]')
+                    DEVELOPER_ROLES=$(echo $REALM_ROLES | jq  '[.[] | select (.name == "dc_developer" or .name == "sr-developer" or .name == "dc_analyst" or .name == "sr-readonly" )]')
+
+                    echo "Admin roles are $(echo $ADMIN_ROLES | jq)"
+                    echo "Developer roles are $(echo $DEVELOPER_ROLES | jq)"
+                    DEV_USERNAME=dswdev
+
+                    echo "Create developer user $DEV_USERNAME"
+
+                    DEV_PW=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | iconv --from-code=UTF-8 -c | head -c 8)
+
+                    cat << EOF > /tmp/developer.json
+                    {
+                      "username": "$DEV_USERNAME",
+                      "firstName": "DSW",
+                      "lastName": "Developer",
+                      "email": "dswdev@email.com",
+                      "emailVerified": true,
+                      "enabled": true,
+                      "credentials": [
+                        {
+                          "type": "password",
+                          "value": "$DEV_PW",
+                          "temporary": false
+                        }
+                      ]
+                    }
+                    EOF
+
+                    DEV_USER_ID=$(curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/users \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data @/tmp/developer.json | grep -i ^Location | sed 's#.*/##' | tr -d "\n\r" )
+
+                    echo "Developer user created has user id $DEV_USER_ID"
+
+                    curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/users/$DEV_USER_ID/role-mappings/realm \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data "$DEVELOPER_ROLES"
+
+                    echo -n $DEV_USERNAME > $(results.dsw-dev-username.path)
+                    echo -n $DEV_PW > $(results.dsw-dev-password.path)
+
+                    ADM_USERNAME=dswadmin
+
+                    echo "Create admin user $ADM_USERNAME"
+
+                    ADM_PW=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | iconv --from-code=UTF-8 -c | head -c 8)
+
+                    cat << EOF > /tmp/admin.json
+                    {
+                      "username": "$ADM_USERNAME",
+                      "firstName": "DSW",
+                      "lastName": "Admin",
+                      "email": "dswadm@email.com",
+                      "emailVerified": true,
+                      "enabled": true,
+                      "credentials": [
+                        {
+                          "type": "password",
+                          "value": "$ADM_PW",
+                          "temporary": false
+                        }
+                      ]
+                    }
+                    EOF
+
+                    TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
+                      --header 'Content-Type: application/x-www-form-urlencoded' \
+                      --data-urlencode 'client_id=admin-cli' \
+                      --data-urlencode 'grant_type=password' \
+                      --data-urlencode 'username=admin' \
+                      --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
+
+                    ADM_USER_ID=$(curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/users \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data @/tmp/admin.json | grep -i ^Location | sed 's#.*/##' | tr -d "\n\r" )
+
+                    echo "Admin user created has user id $ADM_USER_ID"
+
+
+                    curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/users/$ADM_USER_ID/role-mappings/realm \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data "$ADMIN_ROLES"
+
+                    echo -n $ADM_USERNAME > $(results.dsw-admin-username.path)
+                    echo -n $ADM_PW > $(results.dsw-admin-password.path)
+
+                - name: register-users-gitlab
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_INST=$(params.install-namespace)
+                    KC_URL=$(params.keycloak-url)
+                    KC_REALM=$(params.keycloak-dsw-realm-name)
+                    APP_URL=$(params.cluster-app-url)
+                    KC_CRED_SECRET=$(params.keycloak-credentials-secret)
