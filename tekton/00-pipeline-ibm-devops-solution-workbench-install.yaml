@@ -682,6 +682,9 @@ spec:
                 value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
               - name: keycloak-url
                 value: "$(tasks.install-keycloak.results.keycloak-url)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
           taskSpec:
               displayName: Install GitLab with GitLab operator
               params:
@@ -717,6 +720,13 @@ spec:
                   type: string
                   description: "Prefix to use for all gitlab subdomains"
                   default: dsw
+              results:
+                  - name: gitlab-url
+                    description: "URL of the newly created gitlab instance"
+              workspaces:
+                  - name: shared-wksp
+                    description: |
+                      Folder to read and write files to, that are shared amongst tasks in the parent pipeline
               steps:
                 - name: install-gitlab-operator
                   image: "$(params.default-step-image)"
@@ -983,6 +993,9 @@ spec:
                             internalPort: 8076
                         version: $(params.gitlab-helm-chart-version)
                     EOF
+
+                    echo -n "$GL_PREFIX-gitlab.$APP_URL" > $(results.gitlab-url.path)
+
         - name: configure-users
           params:
               - name: default-step-image
@@ -997,6 +1010,8 @@ spec:
                 value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
               - name: keycloak-url
                 value: "$(tasks.install-keycloak.results.keycloak-url)"
+              - name: gitlab-url
+                value: "$(tasks.install-gitlab.results.gitlab-url)"
           workspaces:
               - name: shared-wksp
                 workspace: global-wksp
@@ -1023,6 +1038,9 @@ spec:
                 - name: keycloak-url
                   type: string
                   description: "Url of keycloak admin host (without protocol)"
+                - name: gitlab-url
+                  type: string
+                  description: "Url of gitlab web UI (without protocol)"
               results:
                 - name: dsw-dev-username
                   description: The username of the DSW developer user that gets created
@@ -1102,6 +1120,13 @@ spec:
                     }
                     EOF
 
+                    if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+                      if [ ! -d "$(workspaces.shared-wksp.path)/create-keycloak-users" ]; then
+                        mkdir $(workspaces.shared-wksp.path)/create-keycloak-users
+                      fi
+                      cp /tmp/developer.json $(workspaces.shared-wksp.path)/create-keycloak-users/
+                    fi
+
                     DEV_USER_ID=$(curl -i  \
                       --url https://$KC_URL/admin/realms/$KC_REALM/users \
                       --header 'content-type: application/json' \
@@ -1143,6 +1168,13 @@ spec:
                     }
                     EOF
 
+                    if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+                      if [ ! -d "$(workspaces.shared-wksp.path)/create-keycloak-users" ]; then
+                        mkdir $(workspaces.shared-wksp.path)/create-keycloak-users
+                      fi
+                      cp /tmp/admin.json $(workspaces.shared-wksp.path)/create-keycloak-users/
+                    fi
+
                     TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
                       --header 'Content-Type: application/x-www-form-urlencoded' \
                       --data-urlencode 'client_id=admin-cli' \
@@ -1176,6 +1208,148 @@ spec:
 
                     NS_INST=$(params.install-namespace)
                     KC_URL=$(params.keycloak-url)
+                    GL_URL=$(params.gitlab-url)
                     KC_REALM=$(params.keycloak-dsw-realm-name)
                     APP_URL=$(params.cluster-app-url)
                     KC_CRED_SECRET=$(params.keycloak-credentials-secret)
+                    GL_ROOT_SECRET=gitlab-gitlab-initial-root-password # will always be the case if the gitlab CR has a name of 'gitlab'
+
+                    # obtain gitlab initial root credentials
+                    echo "Obtaining GitLab root password from secret $GL_ROOT_SECRET"
+                    ROOT_PW="$(oc get secret $GL_ROOT_SECRET -o jsonpath='{.data.password}' -n $NS_INST|base64 -d)"
+
+                    # obtain root oauth token (valid for 2h)
+                    echo "Obtaining oauth token for user root"
+                    cat << EOF > /tmp/root.json
+                    {
+                      "grant_type"    : "password",
+                      "username"      : "root",
+                      "password"      : "$ROOT_PW"
+                    }
+                    EOF
+
+                    TOKEN=$(curl --silent --location --request POST "https://$GL_URL/oauth/token" \
+                      --header 'Content-Type: application/json' \
+                      --data @/tmp/root.json | jq -r '.access_token')
+
+
+                    # create group dsw-on-techzone
+                    echo "Creating group dsw-on-techzone"
+                    cat << EOF > /tmp/group.json
+                    {
+                      "name": "DSW on TechZone",
+                      "path": "dsw-on-techzone"
+                    }
+                    EOF
+
+                    GROUP_ID=$(curl --silent \
+                      --url "https://$GL_URL/api/v4/groups" \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data @/tmp/group.json | jq -r '.id')
+
+                    echo "Group dsw-on-techzone created with group id $GROUP_ID"
+
+                    if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+                      ll $(workspaces.shared-wksp.path)
+                    fi
+
+                    # register dswadmin and dswdev user
+
+                    if [[ "$(workspaces.shared-wksp.bound)" == "true" && -d "$(workspaces.shared-wksp.path)/create-keycloak-users" &&  -f "$(workspaces.shared-wksp.path)/create-keycloak-users/admin.json" ]]; then
+                      ADM_FILE=$(workspaces.shared-wksp.path)/create-keycloak-users/admin.json
+                      ADM_USERNAME=$(cat $ADM_FILE | jq -r '.username' | sed -e 's/^"//' -e 's/"$//')
+                      FNAME=$(cat $ADM_FILE | jq -r '.firstName' | sed -e 's/^"//' -e 's/"$//')
+                      LNAME=$(cat $ADM_FILE | jq -r '.lastName' | sed -e 's/^"//' -e 's/"$//')
+                      ADM_NAME="$FNAME $LNAME"
+                      ADM_EMAIL=$(cat $ADM_FILE | jq -r '.email' | sed -e 's/^"//' -e 's/"$//')
+
+                      cat << EOF > /tmp/admin.json
+                      {
+                        "username": "$ADM_USERNAME",
+                        "name": "$ADM_NAME",
+                        "email": "$ADM_EMAIL",
+                        "provider" : "openid_connect",
+                        "extern_uid": "$ADM_USERNAME",
+                        "force_random_password": "true"
+                      }
+                      EOF
+
+                      ADM_USER_ID=$(curl --silent \
+                        --url "https://GL_URL/api/v4/users" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/admin.json | jq -r '.id')
+
+                      echo "Admin user registered [$ADM_USER_ID]"
+                    else
+                      echo "Admin user data could not be retrieved from shared workspace [shared-wksp]. Admin user not registered in gitlab"
+                    fi
+
+                    if [[ "$(workspaces.shared-wksp.bound)" == "true" && -d "$(workspaces.shared-wksp.path)/create-keycloak-users" &&  -f "$(workspaces.shared-wksp.path)/create-keycloak-users/developer.json" ]]; then
+                      DEV_FILE=$(workspaces.shared-wksp.path)/create-keycloak-users/developer.json
+                      DEV_USERNAME=$(cat $DEV_FILE | jq -r '.username' | sed -e 's/^"//' -e 's/"$//')
+                      FNAME=$(cat $DEV_FILE | jq -r '.firstName' | sed -e 's/^"//' -e 's/"$//')
+                      LNAME=$(cat $DEV_FILE | jq -r '.lastName' | sed -e 's/^"//' -e 's/"$//')
+                      DEV_NAME="$FNAME $LNAME"
+                      DEV_EMAIL=$(cat $DEV_FILE | jq -r '.email' | sed -e 's/^"//' -e 's/"$//')
+
+                      cat << EOF > /tmp/developer.json
+                      {
+                        "username": "$DEV_USERNAME",
+                        "name": "$DEV_NAME",
+                        "email": "$DEV_EMAIL",
+                        "provider" : "openid_connect",
+                        "extern_uid": "$DEV_USERNAME",
+                        "force_random_password": "true"
+                      }
+                      EOF
+
+                      DEV_USER_ID=$(curl --silent \
+                        --url "https://GL_URL/api/v4/users" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/developer.json | jq -r '.id')
+
+                      echo "Developer user registered [$DEV_USER_ID]"
+                    else
+                      echo "Developer user data could not be retrieved from shared workspace [shared-wksp]. Developer user not registered in gitlab"
+                    fi
+
+                    # assign dswadmin as owner of the group  dsw-on-techzone
+                    if [[ ! -z $ADM_USER_ID && ! -z $GROUP_ID ]] ; then
+                      cat << EOF > /tmp/member.json
+                      {
+                        "user_id": $ADM_USER_ID,
+                        "access_level": 50
+                      }
+                      EOF
+
+                      curl --silent \
+                        --url "https://$GL_URL/api/v4/groups/$GROUP_ID/members" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/member.json
+
+                      echo "Assigned admin user as group owner"
+                    fi
+
+                    # assign dswdev as maintainer of the group dsw-on-techzone
+                    if [[ ! -z $DEV_USER_ID && ! -z $GROUP_ID ]] ; then
+                      cat << EOF > /tmp/member.json
+                      {
+                        "user_id": $DEV_USER_ID,
+                        "access_level": 40
+                      }
+                      EOF
+
+                      curl --silent \
+                        --url "https://$GL_URL/api/v4/groups/$GROUP_ID/members" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/member.json
+
+                      echo "Assigned developer user as group maintainer"
+                    fi
+
+                    # Create personal access token for dswdev user
