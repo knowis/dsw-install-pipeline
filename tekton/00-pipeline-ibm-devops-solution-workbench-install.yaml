@@ -899,7 +899,7 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
-                    sleep 10
+                    sleep 60 # wait for gitlab-controller-manager to be ready TODO improve that to actually check availability
 
                     NS_INST=$(params.install-namespace)
                     APP_URL=$(params.cluster-app-url)
@@ -1325,10 +1325,6 @@ spec:
 
                     echo "Group dsw-on-techzone created with group id $GROUP_ID"
 
-                    if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
-                      ll $(workspaces.shared-wksp.path)
-                    fi
-
                     # register dswadmin and dswdev user
 
                     if [[ "$(workspaces.shared-wksp.bound)" == "true" && -d "$(workspaces.shared-wksp.path)/create-keycloak-users" &&  -f "$(workspaces.shared-wksp.path)/create-keycloak-users/admin.json" ]]; then
@@ -1339,19 +1335,21 @@ spec:
                       ADM_NAME="$FNAME $LNAME"
                       ADM_EMAIL=$(cat $ADM_FILE | jq -r '.email' | sed -e 's/^"//' -e 's/"$//')
 
+
+
                       cat << EOF > /tmp/admin.json
-                      {
-                        "username": "$ADM_USERNAME",
-                        "name": "$ADM_NAME",
-                        "email": "$ADM_EMAIL",
-                        "provider" : "openid_connect",
-                        "extern_uid": "$ADM_USERNAME",
-                        "force_random_password": "true"
-                      }
-                      EOF
+                    {
+                      "username": "$ADM_USERNAME",
+                      "name": "$ADM_NAME",
+                      "email": "$ADM_EMAIL",
+                      "provider" : "openid_connect",
+                      "extern_uid": "$ADM_USERNAME",
+                      "force_random_password": "true"
+                    }
+                    EOF
 
                       ADM_USER_ID=$(curl --silent \
-                        --url "https://GL_URL/api/v4/users" \
+                        --url "https://$GL_URL/api/v4/users" \
                         --header 'content-type: application/json' \
                         --header "Authorization: Bearer $TOKEN" \
                         --data @/tmp/admin.json | jq -r '.id')
@@ -1370,18 +1368,18 @@ spec:
                       DEV_EMAIL=$(cat $DEV_FILE | jq -r '.email' | sed -e 's/^"//' -e 's/"$//')
 
                       cat << EOF > /tmp/developer.json
-                      {
-                        "username": "$DEV_USERNAME",
-                        "name": "$DEV_NAME",
-                        "email": "$DEV_EMAIL",
-                        "provider" : "openid_connect",
-                        "extern_uid": "$DEV_USERNAME",
-                        "force_random_password": "true"
-                      }
-                      EOF
+                    {
+                      "username": "$DEV_USERNAME",
+                      "name": "$DEV_NAME",
+                      "email": "$DEV_EMAIL",
+                      "provider" : "openid_connect",
+                      "extern_uid": "$DEV_USERNAME",
+                      "force_random_password": "true"
+                    }
+                    EOF
 
                       DEV_USER_ID=$(curl --silent \
-                        --url "https://GL_URL/api/v4/users" \
+                        --url "https://$GL_URL/api/v4/users" \
                         --header 'content-type: application/json' \
                         --header "Authorization: Bearer $TOKEN" \
                         --data @/tmp/developer.json | jq -r '.id')
@@ -1394,11 +1392,11 @@ spec:
                     # assign dswadmin as owner of the group  dsw-on-techzone
                     if [[ ! -z $ADM_USER_ID && ! -z $GROUP_ID ]] ; then
                       cat << EOF > /tmp/member.json
-                      {
-                        "user_id": $ADM_USER_ID,
-                        "access_level": 50
-                      }
-                      EOF
+                    {
+                      "user_id": $ADM_USER_ID,
+                      "access_level": 50
+                    }
+                    EOF
 
                       curl --silent \
                         --url "https://$GL_URL/api/v4/groups/$GROUP_ID/members" \
@@ -1412,11 +1410,11 @@ spec:
                     # assign dswdev as maintainer of the group dsw-on-techzone
                     if [[ ! -z $DEV_USER_ID && ! -z $GROUP_ID ]] ; then
                       cat << EOF > /tmp/member.json
-                      {
-                        "user_id": $DEV_USER_ID,
-                        "access_level": 40
-                      }
-                      EOF
+                    {
+                      "user_id": $DEV_USER_ID,
+                      "access_level": 40
+                    }
+                    EOF
 
                       curl --silent \
                         --url "https://$GL_URL/api/v4/groups/$GROUP_ID/members" \
