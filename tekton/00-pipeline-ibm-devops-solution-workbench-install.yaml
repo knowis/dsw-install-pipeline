@@ -1050,6 +1050,8 @@ spec:
                   description: The username of the DSW admin user that gets created
                 - name: dsw-admin-password
                   description: The password of the DSW admin user that gets created
+                - name: dsw-admin-pat
+                  description: GitLab PAT for dswadm user
               workspaces:
                 - name: shared-wksp
                   description: |
@@ -1426,3 +1428,63 @@ spec:
                     fi
 
                     # Create personal access token for dswdev user
+                    if [[ ! -z $DEV_USER_ID ]] ; then
+                      echo "Creating personal access token (PAT) for user dswdev"
+                      cat << EOF > /tmp/token_request.json
+                    {
+                      "name": "dsw-designer-token",
+                      "expires_at": "$(date -u -d "8 weeks" '+%Y-%m-%d')",
+                      "scopes": ["api"]
+                    }
+                    EOF
+
+                      DEV_PAT=$(curl --silent \
+                        --url "https://$GL_URL/api/v4/users/$DEV_USER_ID/personal_access_tokens" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/token_request.json | jq -r '.token')
+
+
+                      if [[ "$(workspaces.shared-wksp.bound)" == "true" && ! -z $DEV_PAT ]] ; then
+                        if [ ! -d "$(workspaces.shared-wksp.path)/register-users-gitlab" ]; then
+                          mkdir $(workspaces.shared-wksp.path)/register-users-gitlab
+                        fi
+                        echo -n $DEV_PAT > $(workspaces.shared-wksp.path)/register-users-gitlab/dev-pat.txt
+                      fi
+                    else
+                      echo "No user id for developer user found. PAT not created!"
+                    fi
+
+                    # Create personal access token for dswdev user
+                    if [[ ! -z $ADM_USER_ID ]] ; then
+                      echo "Creating personal access token (PAT) for user dswadm"
+                      cat << EOF > /tmp/adm_token_request.json
+                    {
+                      "name": "dsw-designer-token",
+                      "expires_at": "$(date -u -d "8 weeks" '+%Y-%m-%d')",
+                      "scopes": ["api"]
+                    }
+                    EOF
+
+                      ADM_PAT=$(curl --silent \
+                        --url "https://$GL_URL/api/v4/users/$ADM_USER_ID/personal_access_tokens" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/adm_token_request.json | jq -r '.token')
+
+
+                      if [[ "$(workspaces.shared-wksp.bound)" == "true" && ! -z $ADM_PAT ]] ; then
+                        if [ ! -d "$(workspaces.shared-wksp.path)/register-users-gitlab" ]; then
+                          mkdir $(workspaces.shared-wksp.path)/register-users-gitlab
+                        fi
+                        echo -n $ADM_PAT > $(workspaces.shared-wksp.path)/register-users-gitlab/adm-pat.txt
+                      fi
+
+                      echo -n $ADM_PAT > $(results.dsw-admin-pat.path)
+
+                    else
+                      echo "No user id for admin user found. PAT not created!"
+                    fi
+
+                    # Configure PAT for dev and admin user in DSW
+                    # TODO
