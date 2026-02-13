@@ -1,0 +1,16 @@
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  name: exec-gitlab-install-task
+spec:
+  params:
+      - name: default-step-image
+        value: image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.3
+      - name: install-namespace
+        value: techzone-dsw-support
+      - name: cluster-app-url
+        value: apps.ocp-01.knowis.cloud
+      - name: keycloak-url
+        value: dsw-auth-techzone-dsw-support.apps.ocp-01.knowis.cloud
+  taskRef:
+    name: install-gitlab

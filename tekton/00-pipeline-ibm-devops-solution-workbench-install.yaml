@@ -1,0 +1,1490 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+    name: dsw-install
+spec:
+    params:
+        - name: default-step-image
+          type: string
+          description: Image to use to execute step
+          default: "image-registry.openshift-image-registry.svc:5000/techzone-test/dsw-tekton-base:0.0.3"
+        - name: keycloak-dsw-realm-name
+          type: string
+          description: "Name of keycloak realm to authenticate DSW against"
+          default: "dsw"
+        - name: devops-model-chart-repo
+          type: string
+          description: "URL of helm repo providing the DSW helm chart"
+          default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+        - name: devops-model-chart-version
+          type: string
+          description: "DSW chart version to use"
+          default: "5.1.1"
+        - name: install-namespace-prefix
+          type: string
+          description: Prefix to use for namespaces created to install DSW into
+          default: techzone-dsw
+        - name: execute-install-dsw
+          type: string
+          description: "Execute the install-dsw task"
+          default: "true"
+    workspaces:
+        - name: global-wksp
+    tasks:
+        - name: bootstrap
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: bootstrap
+              description: "Task to determine some global facts required by multiple tasks in the pipeline"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+              results:
+                  - name: cluster-app-url
+                    description: "Url (suffix) for services exposed by the cluster"
+              steps:
+                - name: determine-cluster-app-host
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "Createing dummy route to extract apps url from"
+                    SVC_NAME="dummy-route-$(tr -dc 'a-z0-9' < /dev/random | iconv --from-code=UTF-8 -c | head -c 15)"
+                    oc create route edge --service=$SVC_NAME --port=34567
+                    oc get route $SVC_NAME -o jsonpath='{.spec.host}'|sed -nE 's/^.*\.(apps\..*$)/\1/p' | tee $(results.cluster-app-url.path)
+
+                    oc delete route $SVC_NAME
+
+                    echo "Deleted dummy route $SVC_NAME again"
+        - name: create-install-namespaces
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: install-namespace-prefix
+                value: $(params.install-namespace-prefix)
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: Create install namespaces
+              description: "Task to create two namespaces to install DSW into: one for the product itself and one for its dependencies"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                  - name: default-step-image
+                    type: string
+                    description: Image to use to execute step
+                  - name: install-namespace-prefix
+                    type: string
+                    description: Prefix to use for namespaces created to install DSW into
+                    default: techzone-dsw
+              results:
+                  - name: tool-namespace
+                    description: "Name of the namespace (project) that DSW will be installed into"
+                  - name: support-namespace
+                    description: "Name of the namespace (project) that DSW dependencies like e.g. Keycloak will be installed into"
+              steps:
+                - name: create-tool-namespace
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace-prefix)-tools
+                    echo "Createing $NS_NAME namespace"
+                    oc new-project $NS_NAME --display-name="DSW Tool Installation Namespace" --description="Namespace that DevOps Solution Workbench services are deployed into"
+
+                    oc label namespace $NS_NAME app.kubernetes.io/created-by="dsw-techzone-tekton-installer"
+
+                    echo "Namespace $NS_NAME created successfully!"
+                    echo -n $NS_NAME > $(results.tool-namespace.path)
+                - name: create-support-namespace
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace-prefix)-support
+                    echo "Createing $NS_NAME namespace"
+                    oc new-project $NS_NAME --display-name="DSW Tool Support Namespace" --description="Namespace that DevOps Solution Workbench dependencies (like Keycloak) are deployed into"
+
+                    oc label namespace $NS_NAME app.kubernetes.io/created-by="dsw-techzone-tekton-installer"
+
+                    echo "Namespace $NS_NAME created successfully!"
+                    echo -n $NS_NAME > $(results.support-namespace.path)
+        - name: obtain-entitled-registry-token
+          retries: 3
+          params:
+            - name: KEY_ID
+              value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+            - name: SECRETS_MANAGER_ENDPOINT_URL
+              value: >-
+                https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+          taskRef:
+            kind: Task
+            name: ibmcloud-secrets-manager-get
+        - name: create-pull-secret
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: ibm-entitlement-token
+                value: "$(tasks.obtain-entitled-registry-token.results.secret-value)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: Create IBM entitled registry pull secret
+              description: "Task to determine some global facts required by multiple tasks in the pipeline"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: pull-secret-name
+                  type: string
+                  description: "Pull secret allowing images from ibm entitled registry (*.icr.io) to be pulled"
+                  default: ibm-entitlement-key1
+                - name: ibm-entitlement-token
+                  type: string
+                  description: "Token that can be used to authenticate against entitled registry (cp.icr.io)"
+                - name: entitled-registry-url
+                  type: string
+                  description: "URL of entitled registry to pull (DSW) images from"
+                  default: cp.icr.io
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install secret into"
+              steps:
+                - name: create-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    echo "creating entitled registry pull secret"
+                    oc create secret docker-registry $(params.pull-secret-name) --docker-username=iamapikey --docker-password=$(params.pull-secret-name) --docker-email='' --docker-server=$(params.entitled-registry-url) -n $(params.install-namespace)
+
+        - name: install-keycloak
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: keycloak-dsw-realm-name
+                value: "$(params.keycloak-dsw-realm-name)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.support-namespace)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: install-keycloak
+              description: "Task to install keycloak (usinh helm) and its database dependency postgresql"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: postgres-chart-name
+                  type: string
+                  description: Fully qualified repo url of chart, e.g. oci://registry-1.docker.io/cloudpirates/postgres
+                  default: "oci://registry-1.docker.io/cloudpirates/postgres"
+                - name: postgres-release-name
+                  type: string
+                  description: The name of the Helm release
+                  default: "keycloak-postgres"
+                - name: postgres-chart-version
+                  type: string
+                  description: The version of the Helm chart
+                  default: "0.13.8"
+                - name: keycloak-chart-name
+                  type: string
+                  description: Fully qualified repo url of chart, e.g. oci://registry-1.docker.io/cloudpirates/keycloak
+                  default: "oci://registry-1.docker.io/cloudpirates/keycloak"
+                - name: keycloak-release-name
+                  type: string
+                  description: The name of the Helm release
+                  default: "dsw-auth"
+                - name: keycloak-chart-version
+                  type: string
+                  description: The version of the Helm chart
+                  default: "0.11.4"
+                - name: postgres-set-values
+                  type: string
+                  description: "Optional list of key value pairs specified like this: key=value"
+                  default: "auth.existingSecret=keycloak-postgres-postgres-credentials,auth.secretKeys.adminPasswordKey=postgres-password,customUser.existingSecret=keycloak-postgres-keycloak-user-credentials,customUser.secretKeys.name=username,customUser.secretKeys.database=database,customUser.secretKeys.password=password"
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
+              results:
+                - name: keycloak-url
+                  description: "Url for keycloak admin web (without protocol)"
+                - name: keycloak-credentials-secret
+                  description: "Name of secret containining credentials for keycloak admin user"
+                - name: postgres-credentials-secret
+                  description: "Name of secret containing credentials for postgres admin user"
+                - name: postgres-service-url
+                  description: "Name of service providing postgress access"
+              steps:
+                - name: create-postgres-secrets
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Starting generation of keycloak postgres secrets in namespace $NS_NAME"
+
+                    # Create secret 'keycloak-postgres-postgres-credentials' if it doesn't exist yet
+                    if [ -z "$(oc get secret keycloak-postgres-postgres-credentials --ignore-not-found -n $NS_NAME)" ]; then
+                      echo "Creating secret 'keycloak-postgres-postgres-credentials'"
+                      postgres_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | iconv --from-code=UTF-8 -c | head -c 15)
+
+                      oc create -f - << EOF
+                      kind: Secret
+                      apiVersion: v1
+                      metadata:
+                        name: keycloak-postgres-postgres-credentials
+                        namespace: $NS_NAME
+                      stringData:
+                        postgres-password: "${postgres_password}"
+                    EOF
+                    else
+                      echo "Secret 'keycloak-postgres-postgres-credentials' already exists. Skipping…"
+                    fi
+
+                    echo "keycloak-postgres-postgres-credentials" | tee $(results.postgres-credentials-secret.path)
+
+                    # Create secret 'keycloak-postgres-keycloak-user-credentials' if it doesn't exist yet
+                    if [ -z "$(oc get secret keycloak-postgres-keycloak-user-credentials --ignore-not-found -n $NS_NAME)" ]; then
+                      echo "Creating secret 'keycloak-postgres-keycloak-user-credentials'"
+                      keycloak_user_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | iconv --from-code=UTF-8 -c | head -c 15)
+
+                      oc create -f - << EOF
+                      kind: Secret
+                      apiVersion: v1
+                      metadata:
+                        name: keycloak-postgres-keycloak-user-credentials
+                        namespace: $NS_NAME
+                      stringData:
+                        username: keycloak
+                        password: "${keycloak_user_password}"
+                        database: keycloak
+                    EOF
+                    else
+                      echo "Secret 'keycloak-postgres-keycloak-user-credentials' already exists. Skipping…"
+                    fi
+
+
+                - name: install-postgres
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Starting Helm installation in namespace $NS_NAME..."
+
+                    # Build helm install command
+                    HELM_CMD="helm install $(params.postgres-release-name) $(params.postgres-chart-name) --wait --timeout 10m0s -n $NS_NAME"
+
+                    # Add version if specified
+                    if [ -n "$(params.postgres-chart-version)" ]; then
+                      HELM_CMD="$HELM_CMD --version $(params.postgres-chart-version)"
+                    fi
+
+                    # Add set values if specified
+                    if [ -n "$(params.postgres-set-values)" ]; then
+                      HELM_CMD="$HELM_CMD --set $(params.postgres-set-values)"
+                    fi
+
+                    # Execute helm install
+                    echo "Executing: $HELM_CMD"
+                    eval $HELM_CMD
+
+                    # build service string
+                    echo "$(params.postgres-release-name).${NS_NAME}.svc.cluster.local" | tee $(results.postgres-service-url.path)
+
+                    echo "Helm installation completed successfully!"
+                  env:
+                    - name: HOME
+                      value: /tmp
+
+                - name: create-keycloak-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Starting generation of keycloak secret in namespace $NS_NAME"
+
+                    # Create secret 'keycloak-credentials' if it doesn't exist yet
+                    KC_CRED_SECRET="keycloak-credentials"
+                    if [ -z "$(oc get secret $KC_CRED_SECRET --ignore-not-found -n $NS_NAME)" ]; then
+                      echo "Creating secret $KC_CRED_SECRET"
+                      admin_password=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | iconv --from-code=UTF-8 -c | head -c 15)
+
+                      oc create -f - << EOF
+                      kind: Secret
+                      apiVersion: v1
+                      metadata:
+                        name: $KC_CRED_SECRET
+                        namespace: $NS_NAME
+                      stringData:
+                        admin-password: "${admin_password}"
+                    EOF
+                    else
+                      echo "Secret $KC_CRED_SECRET already exists. Skipping…"
+                    fi
+
+                    echo -n $KC_CRED_SECRET > $(results.keycloak-credentials-secret.path)
+
+                - name: install-keycloak-chart
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Starting Helm installation of keycloak in namespace $NS_NAME ..."
+
+                    # Build helm install command
+                    HELM_CMD="helm install $(params.keycloak-release-name) $(params.keycloak-chart-name) --wait --timeout 10m0s -n $NS_NAME"
+
+                    # Add version if specified
+                    if [ -n "$(params.keycloak-chart-version)" ]; then
+                      HELM_CMD="$HELM_CMD --version $(params.keycloak-chart-version)"
+                    fi
+
+                    # Execute helm install
+                    echo "Executing: $HELM_CMD"
+                    eval '$HELM_CMD --values - << EOF
+                    # values-external-secret.yaml
+                    keycloak:
+                      existingSecret: "keycloak-credentials"
+                      secretKeys:
+                        adminPasswordKey: "admin-password"
+                      production: true
+                      proxyHeaders: "xforwarded"
+
+                    database:
+                      type: "postgres"
+                      host: "$(params.postgres-release-name).${NS_NAME}.svc.cluster.local"
+                      name: "keycloak"
+                      existingSecret: "keycloak-postgres-keycloak-user-credentials"
+                      secretKeys:
+                        passwordKey: "password"
+                        usernameKey: "username"
+
+                    # Disable embedded databases
+                    postgres:
+                      enabled: false
+                    mariadb:
+                      enabled: false
+
+                    # Create dsw realm
+                    realm:
+                      import: true
+                      configFile: |
+                        {
+                          "realm": "$(params.keycloak-dsw-realm-name)",
+                          "enabled": true
+                        }
+
+                    resources:
+                      requests:
+                        memory: "1Gi"
+                        cpu: "500m"
+                      limits:
+                        memory: "2Gi"
+                        cpu: "1000m"
+                    EOF'
+
+                - name: create-keycloak-route
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Createing keycloak route in namespace $NS_NAME"
+                    oc create route edge dsw-auth --service="$(params.keycloak-release-name)-keycloak" --port=8080 -n $NS_NAME
+
+                    oc get route dsw-auth -o jsonpath='{.spec.host}' -n $NS_NAME | tee $(results.keycloak-url.path)
+          runAfter:
+              - bootstrap
+        - name: create-mandatory-config
+          params:
+                - name: default-step-image
+                  value: "$(params.default-step-image)"
+                - name: cluster-app-url
+                  value: "$(tasks.bootstrap.results.cluster-app-url)"
+                - name: keycloak-dsw-realm-name
+                  value: "$(params.keycloak-dsw-realm-name)"
+                - name: keycloak-credentials-secret
+                  value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
+                - name: keycloak-url
+                  value: "$(tasks.install-keycloak.results.keycloak-url)"
+                - name: install-namespace
+                  value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+                - name: support-namespace
+                  value: "$(tasks.create-install-namespaces.results.support-namespace)"
+          taskSpec:
+              displayName: Create mandatory config
+              description: "Task to create some secrets that configure mandatory aspects of DSW"
+              workspaces:
+                  - name: shared-wksp
+                    description: |
+                      Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+                - name: keycloak-credentials-secret
+                  type: string
+                  description: "Name of the secret holding the admin credentials for keycloak"
+                  default: "keycloak-credentials"
+                - name: keycloak-url
+                  type: string
+                  description: "Url of keycloak admin host (without protocol)"
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
+                - name: support-namespace
+                  type: string
+                  description: "Namespace where dependencies like Keycloak are installed"
+              results:
+                  - name: cluster-app-url
+                    description: "Url (suffix) for services exposed by the cluster"
+              steps:
+                - name: create-iam-settings-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace)
+
+                    # Create secret 'k5-iam-settings' if it doesn't exist yet
+                    if [ -z "$(oc get secret k5-iam-settings --ignore-not-found -n $NS_NAME)" ]; then
+                      echo "Createing k5-iam-settings secret"
+                      oc create -f - << EOF
+                      kind: Secret
+                      apiVersion: v1
+                      metadata:
+                        name: k5-iam-settings
+                        namespace: $NS_NAME
+                      stringData:
+                        hostname: "https://$(params.keycloak-url)"
+                        realm: "$(params.keycloak-dsw-realm-name)"
+                    EOF
+                    else
+                      echo "Secret k5-iam-settings already exists. Skipping creation…"
+                    fi
+                - name: create-iam-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace)
+                    NS_SUPPORT_NAME=$(params.support-namespace)
+
+
+                    echo "Reading keycloak credentials from secret $(params.keycloak-credentials-secret)"
+                    KC_CRED_SECRET=$(params.keycloak-credentials-secret)
+                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_SUPPORT_NAME|base64 -d)"
+
+                    # Create secret 'k5-iam-secret' if it doesn't exist yet
+                    if [ -z "$(oc get secret k5-iam-secret --ignore-not-found)" ]; then
+                      echo "Createing k5-iam-secret secret"
+                      oc create -f - << EOF
+                      kind: Secret
+                      apiVersion: v1
+                      metadata:
+                        name: k5-iam-secret
+                        namespace: $NS_NAME
+                      stringData:
+                        adminUsername: "admin"
+                        adminPassword: "$KC_ADMIN_PW"
+                    EOF
+                    else
+                      echo "Secret k5-iam-secret already exists. Skipping creation…"
+                    fi
+
+          workspaces:
+                - name: shared-wksp
+                  workspace: global-wksp
+        - name: install-dsw
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: cluster-app-url
+                value: "$(tasks.bootstrap.results.cluster-app-url)"
+              - name: keycloak-dsw-realm-name
+                value: "$(params.keycloak-dsw-realm-name)"
+              - name: keycloak-credentials-secret
+                value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
+              - name: keycloak-url
+                value: "$(tasks.install-keycloak.results.keycloak-url)"
+              - name: devops-model-chart-repo
+                value: "$(params.devops-model-chart-repo)"
+              - name: devops-model-chart-version
+                value: "$(params.devops-model-chart-version)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+          when:
+              - input: "$(params.execute-install-dsw)"
+                operator: in
+                values: ["true"]
+          taskSpec:
+              displayName: Install DSW
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+                - name: keycloak-credentials-secret
+                  type: string
+                  description: "Name of the secret holding the admin credentials for keycloak"
+                  default: "keycloak-credentials"
+                - name: keycloak-url
+                  type: string
+                  description: "Url of keycloak admin host (without protocol)"
+                - name: devops-model-chart-repo
+                  type: string
+                  description: Fully qualified repo url where the dsw (ibm-devops-model) chart is published
+                  default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+                - name: devops-model-release-name
+                  type: string
+                  description: "Release name to use for helm install cmd of devops-mode-chart"
+                  default: "dsw"
+                - name: devops-model-chart-name
+                  type: string
+                  description: (Short) name of helm chart to install
+                  default: "ibm-devops-model"
+                - name: devops-model-chart-version
+                  type: string
+                  description: helm chart version to install
+                  default: 5.1.1
+                - name: cluster-app-url
+                  type: string
+                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
+              steps:
+                - name: install-dsw-chart
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_NAME=$(params.install-namespace)
+
+                    echo "Adding repo"
+                    helm version
+                    HELM_REPO_NAME=ibm-devops-repo
+                    helm repo add $HELM_REPO_NAME $(params.devops-model-chart-repo)
+                    helm repo update
+                    helm search repo
+
+
+                    echo "Starting Helm installation..."
+
+                    # Build helm install command
+                    HELM_CMD="helm install $(params.devops-model-release-name) ${HELM_REPO_NAME}/$(params.devops-model-chart-name) --wait --timeout 10m0s -n $NS_NAME"
+
+                    # Add version if specified
+                    if [ -n "$(params.devops-model-chart-version)" ]; then
+                      HELM_CMD="$HELM_CMD --version $(params.devops-model-chart-version)"
+                    fi
+
+                    # Execute helm install
+                    echo "Executing: $HELM_CMD"
+                    eval '$HELM_CMD --values - << EOF
+                    # value overrides as provided by MMe on January, 22nd 2026 (teams)
+                    global:
+                      domain: dsw$(params.cluster-app-url)
+                      rationalLicenseKeyServer: "@baw-isf.knowis.net"                     # TODO: change to your server
+                      image:
+                        registry: de.icr.io/isw_release
+                        privateRegistry: ""
+                        prefix: ""
+                      platform:
+                        enabled: false
+                      k5:
+                        identity:
+                          secretName: "$(params.keycloak-credentials-secret)"
+                          url: "https://$(params.keycloak-url)"
+                          realm: $(params.keycloak-dsw-realm-name)
+                        secrets:
+                          mongodb: "k5-designer-mongodb"
+                          mongodbKey: "connectionString"
+                          mongodbConnectionString: "mongodb://root:pw@mongodb.namespace.svc.cluster.local:27017/admin?ssl=false"   # TODO: change to your mongodb connection string
+                          truststore: "k5-hub-truststore"
+                    EOF'
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+
+        - name: install-gitlab
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.support-namespace)"
+              - name: cluster-app-url
+                value: "$(tasks.bootstrap.results.cluster-app-url)"
+              - name: keycloak-dsw-realm-name
+                value: "$(params.keycloak-dsw-realm-name)"
+              - name: keycloak-credentials-secret
+                value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
+              - name: keycloak-url
+                value: "$(tasks.install-keycloak.results.keycloak-url)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: Install GitLab with GitLab operator
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
+                - name: operator-name
+                  type: string
+                  description: "Name of the GitLab operator"
+                  default: gitlab-operator-kubernetes
+                - name: cluster-app-url
+                  type: string
+                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+                - name: gitlab-helm-chart-version
+                  type: string
+                  description: "Version of the helm chart that the operator should install. Needs to be compatible with the operator version."
+                  default: 9.8.4
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+                - name: keycloak-credentials-secret
+                  type: string
+                  description: "Name of the secret holding the admin credentials for keycloak"
+                  default: "keycloak-credentials"
+                - name: keycloak-url
+                  type: string
+                  description: "Url of keycloak admin host (without protocol)"
+                - name: instance-prefix
+                  type: string
+                  description: "Prefix to use for all gitlab subdomains"
+                  default: dsw
+              results:
+                  - name: gitlab-url
+                    description: "URL of the newly created gitlab instance"
+              workspaces:
+                  - name: shared-wksp
+                    description: |
+                      Folder to read and write files to, that are shared amongst tasks in the parent pipeline
+              steps:
+                - name: install-gitlab-operator
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    OP_NAME=$(params.operator-name)
+                    NS_INST=$(params.install-namespace)
+
+                    echo "Beginning installation of GitLab via operator $OP_NAME in namespace $NS_INST"
+
+                    # get details of latest ClusterServiceVersion in default channel
+                    default_channel="$(oc get packagemanifests $OP_NAME -o jsonpath="{.status.defaultChannel}")"
+
+                    echo "Using channel $default_channel"
+
+                    latest_csv="$(oc get packagemanifests $OP_NAME -o jsonpath="{.status.channels[?(@.name=='${default_channel}')].entries[0].name}")"
+
+                    echo "Using ClusterServiceVersion $latest_csv"
+
+                    catalog_source="$(oc get packagemanifests $OP_NAME -o jsonpath={.status.catalogSource})"
+
+                    catalog_source_namespace="$(oc get packagemanifests $OP_NAME -o jsonpath={.status.catalogSourceNamespace})"
+
+                    # Create an OperatorGroup
+
+                    oc create -f - << EOF
+                    apiVersion: operators.coreos.com/v1
+                    kind: OperatorGroup
+                    metadata:
+                      generateName: $NS_INST-
+                      annotations:
+                        olm.providedAPIs: GitLab.v1beta1.apps.gitlab.com
+                      namespace: $NS_INST
+                    spec:
+                      targetNamespaces:
+                        - $NS_INST
+                      upgradeStrategy: Default
+                    EOF
+
+                    # Create a subscription
+
+                    oc apply -f - << EOF
+                    apiVersion: operators.coreos.com/v1alpha1
+                    kind: Subscription
+                    metadata:
+                      labels:
+                        operators.coreos.com/$OP_NAME.$NS_INST: ''
+                      name: $OP_NAME
+                      namespace: $NS_INST
+                    spec:
+                      channel: $default_channel
+                      installPlanApproval: Manual
+                      name: $OP_NAME
+                      source: $catalog_source
+                      sourceNamespace: $catalog_source_namespace
+                      startingCSV: $latest_csv
+                    EOF
+
+                    # Approve Installplan
+                    sleep 30
+                    echo "Approving installplan"
+                    oc get installplan -n $NS_INST
+
+
+                    installplan_name="$(oc get installplan -o jsonpath="{.items[?(@.spec.clusterServiceVersionNames[0]=='$latest_csv')].metadata.name}" -n $NS_INST)"
+                    oc patch installplan/$installplan_name --type merge --patch '{"spec":{"approved": true}}' -n $NS_INST
+                    #
+
+                    echo "Installation of GitLab operator done"
+
+                - name: create-oauth-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_INST=$(params.install-namespace)
+                    KC_URL=$(params.keycloak-url)
+                    KC_REALM=$(params.keycloak-dsw-realm-name)
+                    APP_URL=$(params.cluster-app-url)
+                    GL_PREFIX=$(params.instance-prefix)
+                    GL_CLIENT=gitlab
+                    KC_CRED_SECRET=$(params.keycloak-credentials-secret)
+
+                    echo "Reading keycloak credentials from secret $KC_CRED_SECRET in namespace $NS_INST"
+                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_INST|base64 -d)"
+
+                    echo "Creating keycloak client for GitLab in realm $KC_REALM"
+
+                    TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
+                      --header 'Content-Type: application/x-www-form-urlencoded' \
+                      --data-urlencode 'client_id=admin-cli' \
+                      --data-urlencode 'grant_type=password' \
+                      --data-urlencode 'username=admin' \
+                      --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
+
+                    echo "Successfully fetched keycloak admin token"
+
+                    echo "calling https://$KC_URL/admin/realms/$KC_REALM/clients to create new client $GL_CLIENT"
+
+                    cat << EOF > /tmp/client.json
+                    {
+                      "protocol": "openid-connect",
+                      "clientId": "$GL_CLIENT",
+                      "enabled": true,
+                      "publicClient": false,
+                      "standardFlowEnabled": true,
+                      "serviceAccountsEnabled": false,
+                      "directAccessGrantsEnabled": true,
+                      "rootUrl": "https://$GL_PREFIX-gitlab.$APP_URL",
+                      "redirectUris": [
+                        "https://$GL_PREFIX-gitlab.$APP_URL/*"
+                      ]
+                    }
+                    EOF
+
+
+                    CLIENT_ID=$(curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/clients \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data @/tmp/client.json | grep -i ^Location | sed 's#.*/##' | tr -d "\n\r" )
+
+                    echo "Successfully created client $GL_CLIENT in realm $KC_REALM with ID $CLIENT_ID"
+
+                    sleep 5
+
+                    CLIENT_URL="https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID}"
+
+                    KCC_SECRET=$(curl --silent --url https://${KC_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_ID} \
+                      --header "Authorization: Bearer $TOKEN" | jq -r '.secret')
+
+                    echo "Successfully retrieved client secret for $GL_CLIENT"
+
+                    echo "Creating secret keycloak-oauth2 to configure openid for GitLab"
+
+                    oc create -f - << EOF
+                    kind: Secret
+                    apiVersion: v1
+                    metadata:
+                      name: keycloak-oauth2
+                      namespace: $NS_INST
+                    stringData:
+                      provider: |
+                        name: "openid_connect"
+                        label: "Keycloak"
+                        args:
+                          name: "openid_connect"
+                          scope: ["openid", "profile", "email"]
+                          response_type: "code"
+                          issuer:  "https://$KC_URL/realms/$KC_REALM"
+                          client_auth_method: "query"
+                          discovery: true
+                          uid_field: "preferred_username"
+                          pkce: true
+                          client_options:
+                            identifier: "gitlab"
+                            secret: "$KCC_SECRET"
+                            redirect_uri: "https://$GL_PREFIX-gitlab.$APP_URL/users/auth/openid_connect/callback"
+                    EOF
+
+                    echo "Secret keycloak-oauth2 created"
+
+
+                - name: create-gitlab-instance
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    sleep 60 # wait for gitlab-controller-manager to be ready TODO improve that to actually check availability
+
+                    NS_INST=$(params.install-namespace)
+                    APP_URL=$(params.cluster-app-url)
+                    GL_PREFIX=$(params.instance-prefix)
+
+                    oc create -f - << EOF
+                    apiVersion: apps.gitlab.com/v1beta1
+                    kind: GitLab
+                    metadata:
+                      name: gitlab
+                      namespace: $NS_INST
+                    spec:
+                      chart:
+                        values:
+                          certmanager:
+                            install: false
+                          gitlab:
+                            migrations:
+                              enabled: true
+                            toolbox:
+                              antiAffinityLabels:
+                                matchLabels:
+                                  app: gitaly
+                              replicas: 1
+                          global:
+                            appConfig:
+                              omniauth:
+                                enabled: true
+                                autoLinkSamlUser: false
+                                providers:
+                                  - key: provider
+                                    secret: keycloak-oauth2
+                                syncProfileAttributes:
+                                  - email
+                                autoSignInWithProvider: null
+                                syncProfileFromProvider:
+                                  - openid_connect
+                                allowBypassTwoFactor: []
+                                allowSingleSignOn:
+                                  - openid_connect
+                                autoLinkUser: []
+                                externalProviders: []
+                                autoLinkLdapUser: false
+                                blockAutoCreatedUsers: true
+                            gitaly:
+                              authToken: {}
+                              enabled: true
+                              external: []
+                              internal:
+                                names:
+                                  - default
+                              service:
+                                externalPort: 8075
+                                internalPort: 8075
+                                name: gitaly
+                                type: ClusterIP
+                            hosts:
+                              domain: $APP_URL
+                              https: true
+                              minio:
+                                name: $GL_PREFIX-minio-gitlab.$APP_URL
+                              smartcard: {}
+                              hostSuffix: null
+                              gitlab:
+                                name: $GL_PREFIX-gitlab.$APP_URL
+                              tls: {}
+                              registry:
+                                name: $GL_PREFIX-registry.$APP_URL
+                              kas:
+                                name: $GL_PREFIX-kas.$APP_URL
+                            ingress:
+                              annotations:
+                                route.openshift.io/termination: edge
+                              class: openshift-default
+                              configureCertmanager: false
+                              tls:
+                                enabled: false
+                                secretName: gitlab-secrets
+                            redis:
+                              auth:
+                                enabled: true
+                          postgresql:
+                            primary:
+                              extendedConfiguration: max_connections = 200
+                          tls:
+                            application:
+                              allowClusterRoles: true
+                              create: false
+                              links: []
+                            externalPort: 8076
+                            internalPort: 8076
+                        version: $(params.gitlab-helm-chart-version)
+                    EOF
+
+                    echo -n "$GL_PREFIX-gitlab.$APP_URL" > $(results.gitlab-url.path)
+
+        - name: configure-users
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.support-namespace)"
+              - name: cluster-app-url
+                value: "$(tasks.bootstrap.results.cluster-app-url)"
+              - name: keycloak-dsw-realm-name
+                value: "$(params.keycloak-dsw-realm-name)"
+              - name: keycloak-credentials-secret
+                value: "$(tasks.install-keycloak.results.keycloak-credentials-secret)"
+              - name: keycloak-url
+                value: "$(tasks.install-keycloak.results.keycloak-url)"
+              - name: gitlab-url
+                value: "$(tasks.install-gitlab.results.gitlab-url)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          taskSpec:
+              displayName: Configure users and permissions
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install into"
+                - name: cluster-app-url
+                  type: string
+                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+                - name: keycloak-dsw-realm-name
+                  type: string
+                  description: "Name of realm in keycloak to be used for authenticating to DSW"
+                  default: "dsw"
+                - name: keycloak-credentials-secret
+                  type: string
+                  description: "Name of the secret holding the admin credentials for keycloak"
+                  default: "keycloak-credentials"
+                - name: keycloak-url
+                  type: string
+                  description: "Url of keycloak admin host (without protocol)"
+                - name: gitlab-url
+                  type: string
+                  description: "Url of gitlab web UI (without protocol)"
+              results:
+                - name: dsw-dev-username
+                  description: The username of the DSW developer user that gets created
+                - name: dsw-dev-password
+                  description: The password of the DSW developer user that gets created
+                - name: dsw-admin-username
+                  description: The username of the DSW admin user that gets created
+                - name: dsw-admin-password
+                  description: The password of the DSW admin user that gets created
+                - name: dsw-admin-pat
+                  description: GitLab PAT for dswadm user
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              steps:
+                - name: create-keycloak-users
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_INST=$(params.install-namespace)
+                    KC_URL=$(params.keycloak-url)
+                    KC_REALM=$(params.keycloak-dsw-realm-name)
+                    APP_URL=$(params.cluster-app-url)
+                    KC_CRED_SECRET=$(params.keycloak-credentials-secret)
+
+
+                    echo "*** Creating a DSW developer and admin user in keycloak ***"
+
+                    echo "Reading keycloak credentials from secret $KC_CRED_SECRET in namespace $NS_INST"
+                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_INST|base64 -d)"
+
+                    TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
+                      --header 'Content-Type: application/x-www-form-urlencoded' \
+                      --data-urlencode 'client_id=admin-cli' \
+                      --data-urlencode 'grant_type=password' \
+                      --data-urlencode 'username=admin' \
+                      --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
+
+                    echo "Successfully fetched keycloak admin token"
+
+                    echo "Fetching realm roles"
+
+                    REALM_ROLES=$(curl --request GET \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/roles \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN")
+
+                    echo "Realm roles are $(echo $REALM_ROLES | jq)"
+
+                    ADMIN_ROLES=$(echo $REALM_ROLES | jq  '[.[] | select (.name == "dc_developer" or .name == "sr-admin" or .name == "sr-developer" or .name == "tm_admin" or .name == "dc_analyst" or .name == "cm_admin" or .name == "dc_admin" or .name == "sr-readonly" )]')
+                    DEVELOPER_ROLES=$(echo $REALM_ROLES | jq  '[.[] | select (.name == "dc_developer" or .name == "sr-developer" or .name == "dc_analyst" or .name == "sr-readonly" )]')
+
+                    echo "Admin roles are $(echo $ADMIN_ROLES | jq)"
+                    echo "Developer roles are $(echo $DEVELOPER_ROLES | jq)"
+                    DEV_USERNAME=dswdev
+
+                    echo "Create developer user $DEV_USERNAME"
+
+                    DEV_PW=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | iconv --from-code=UTF-8 -c | head -c 8)
+
+                    cat << EOF > /tmp/developer.json
+                    {
+                      "username": "$DEV_USERNAME",
+                      "firstName": "DSW",
+                      "lastName": "Developer",
+                      "email": "dswdev@email.com",
+                      "emailVerified": true,
+                      "enabled": true,
+                      "credentials": [
+                        {
+                          "type": "password",
+                          "value": "$DEV_PW",
+                          "temporary": false
+                        }
+                      ]
+                    }
+                    EOF
+
+                    if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+                      if [ ! -d "$(workspaces.shared-wksp.path)/create-keycloak-users" ]; then
+                        mkdir $(workspaces.shared-wksp.path)/create-keycloak-users
+                      fi
+                      cp /tmp/developer.json $(workspaces.shared-wksp.path)/create-keycloak-users/
+                    fi
+
+                    DEV_USER_ID=$(curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/users \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data @/tmp/developer.json | grep -i ^Location | sed 's#.*/##' | tr -d "\n\r" )
+
+                    echo "Developer user created has user id $DEV_USER_ID"
+
+                    curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/users/$DEV_USER_ID/role-mappings/realm \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data "$DEVELOPER_ROLES"
+
+                    echo -n $DEV_USERNAME > $(results.dsw-dev-username.path)
+                    echo -n $DEV_PW > $(results.dsw-dev-password.path)
+
+                    ADM_USERNAME=dswadmin
+
+                    echo "Create admin user $ADM_USERNAME"
+
+                    ADM_PW=$(tr -dc 'A-Za-z0-9!?%=+_&;%§#-' < /dev/random | iconv --from-code=UTF-8 -c | head -c 8)
+
+                    cat << EOF > /tmp/admin.json
+                    {
+                      "username": "$ADM_USERNAME",
+                      "firstName": "DSW",
+                      "lastName": "Admin",
+                      "email": "dswadm@email.com",
+                      "emailVerified": true,
+                      "enabled": true,
+                      "credentials": [
+                        {
+                          "type": "password",
+                          "value": "$ADM_PW",
+                          "temporary": false
+                        }
+                      ]
+                    }
+                    EOF
+
+                    if [ "$(workspaces.shared-wksp.bound)" == "true" ] ; then
+                      if [ ! -d "$(workspaces.shared-wksp.path)/create-keycloak-users" ]; then
+                        mkdir $(workspaces.shared-wksp.path)/create-keycloak-users
+                      fi
+                      cp /tmp/admin.json $(workspaces.shared-wksp.path)/create-keycloak-users/
+                    fi
+
+                    TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
+                      --header 'Content-Type: application/x-www-form-urlencoded' \
+                      --data-urlencode 'client_id=admin-cli' \
+                      --data-urlencode 'grant_type=password' \
+                      --data-urlencode 'username=admin' \
+                      --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
+
+                    ADM_USER_ID=$(curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/users \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data @/tmp/admin.json | grep -i ^Location | sed 's#.*/##' | tr -d "\n\r" )
+
+                    echo "Admin user created has user id $ADM_USER_ID"
+
+
+                    curl -i  \
+                      --url https://$KC_URL/admin/realms/$KC_REALM/users/$ADM_USER_ID/role-mappings/realm \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data "$ADMIN_ROLES"
+
+                    echo -n $ADM_USERNAME > $(results.dsw-admin-username.path)
+                    echo -n $ADM_PW > $(results.dsw-admin-password.path)
+
+                - name: register-users-gitlab
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
+
+                    NS_INST=$(params.install-namespace)
+                    KC_URL=$(params.keycloak-url)
+                    GL_URL=$(params.gitlab-url)
+                    KC_REALM=$(params.keycloak-dsw-realm-name)
+                    APP_URL=$(params.cluster-app-url)
+                    KC_CRED_SECRET=$(params.keycloak-credentials-secret)
+                    GL_ROOT_SECRET=gitlab-gitlab-initial-root-password # will always be the case if the gitlab CR has a name of 'gitlab'
+
+                    wait_for_http() {
+                        # Configuration
+                        local URL="${1}"
+                        local TIMEOUT="${2:-300}"  # Default 5 minutes
+                        local INTERVAL="${3:-5}"   # Default 5 seconds between attempts
+
+                        # Validation
+                        if [ -z "$URL" ]; then
+                            echo "Error: URL is required"
+                            echo "Usage: wait_for_http <url> [timeout_seconds] [interval_seconds]"
+                            echo "Example: wait_for_http https://example.com 300 5"
+                            return 1
+                        fi
+
+                        # Validate timeout and interval are numbers
+                        if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
+                            echo "Error: Timeout must be a positive integer"
+                            return 1
+                        fi
+
+                        if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]]; then
+                            echo "Error: Interval must be a positive integer"
+                            return 1
+                        fi
+
+                        echo "Waiting for HTTP endpoint: $URL"
+                        echo "Timeout: ${TIMEOUT}s, Check interval: ${INTERVAL}s"
+                        echo "----------------------------------------"
+
+                        local START_TIME=$(date +%s)
+                        local ELAPSED=0
+
+                        while [ $ELAPSED -lt $TIMEOUT ]; do
+                            local CURRENT_TIME=$(date +%s)
+                            ELAPSED=$((CURRENT_TIME - START_TIME))
+
+                            # Make HTTP request and capture response code
+                            local HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "$URL" 2>/dev/null || echo "000")
+
+                            # Check if we got a valid HTTP response (2xx or 3xx)
+                            if [[ "$HTTP_CODE" =~ ^[23][0-9][0-9]$ ]]; then
+                                echo "✓ Success! Received HTTP $HTTP_CODE after ${ELAPSED}s"
+                                return 0
+                            fi
+
+                            # Show progress
+                            if [ "$HTTP_CODE" = "000" ]; then
+                                echo "[${ELAPSED}s] Connection failed - retrying..."
+                            else
+                                echo "[${ELAPSED}s] HTTP $HTTP_CODE - retrying..."
+                            fi
+
+                            # Check if we've exceeded timeout before sleeping
+                            local REMAINING=$((TIMEOUT - ELAPSED))
+                            if [ $REMAINING -le 0 ]; then
+                                break
+                            fi
+
+                            # Sleep for interval or remaining time, whichever is shorter
+                            local SLEEP_TIME=$INTERVAL
+                            if [ $REMAINING -lt $INTERVAL ]; then
+                                SLEEP_TIME=$REMAINING
+                            fi
+
+                            sleep $SLEEP_TIME
+                        done
+
+                        # Timeout reached
+                        echo "✗ Timeout reached after ${TIMEOUT}s without valid HTTP response"
+                        return 1
+                    }
+
+                    echo "Waiting for max 20 minutes for new gitlab instance to be available"
+                    wait_for_http "https://$GL_URL/oauth/token" 1200 30
+
+                    # obtain gitlab initial root credentials
+                    echo "Obtaining GitLab root password from secret $GL_ROOT_SECRET"
+                    ROOT_PW="$(oc get secret $GL_ROOT_SECRET -o jsonpath='{.data.password}' -n $NS_INST|base64 -d)"
+
+                    # obtain root oauth token (valid for 2h)
+                    echo "Obtaining oauth token for user root"
+                    cat << EOF > /tmp/root.json
+                    {
+                      "grant_type"    : "password",
+                      "username"      : "root",
+                      "password"      : "$ROOT_PW"
+                    }
+                    EOF
+
+                    TOKEN=$(curl --silent --location --request POST "https://$GL_URL/oauth/token" \
+                      --header 'Content-Type: application/json' \
+                      --data @/tmp/root.json | jq -r '.access_token')
+
+
+                    # create group dsw-on-techzone
+                    echo "Creating group dsw-on-techzone"
+                    cat << EOF > /tmp/group.json
+                    {
+                      "name": "DSW on TechZone",
+                      "path": "dsw-on-techzone"
+                    }
+                    EOF
+
+                    GROUP_ID=$(curl --silent \
+                      --url "https://$GL_URL/api/v4/groups" \
+                      --header 'content-type: application/json' \
+                      --header "Authorization: Bearer $TOKEN" \
+                      --data @/tmp/group.json | jq -r '.id')
+
+                    echo "Group dsw-on-techzone created with group id $GROUP_ID"
+
+                    # register dswadmin and dswdev user
+
+                    if [[ "$(workspaces.shared-wksp.bound)" == "true" && -d "$(workspaces.shared-wksp.path)/create-keycloak-users" &&  -f "$(workspaces.shared-wksp.path)/create-keycloak-users/admin.json" ]]; then
+                      ADM_FILE=$(workspaces.shared-wksp.path)/create-keycloak-users/admin.json
+                      ADM_USERNAME=$(cat $ADM_FILE | jq -r '.username' | sed -e 's/^"//' -e 's/"$//')
+                      FNAME=$(cat $ADM_FILE | jq -r '.firstName' | sed -e 's/^"//' -e 's/"$//')
+                      LNAME=$(cat $ADM_FILE | jq -r '.lastName' | sed -e 's/^"//' -e 's/"$//')
+                      ADM_NAME="$FNAME $LNAME"
+                      ADM_EMAIL=$(cat $ADM_FILE | jq -r '.email' | sed -e 's/^"//' -e 's/"$//')
+
+
+
+                      cat << EOF > /tmp/admin.json
+                    {
+                      "username": "$ADM_USERNAME",
+                      "name": "$ADM_NAME",
+                      "email": "$ADM_EMAIL",
+                      "provider" : "openid_connect",
+                      "extern_uid": "$ADM_USERNAME",
+                      "force_random_password": "true"
+                    }
+                    EOF
+
+                      ADM_USER_ID=$(curl --silent \
+                        --url "https://$GL_URL/api/v4/users" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/admin.json | jq -r '.id')
+
+                      echo "Admin user registered [$ADM_USER_ID]"
+                    else
+                      echo "Admin user data could not be retrieved from shared workspace [shared-wksp]. Admin user not registered in gitlab"
+                    fi
+
+                    if [[ "$(workspaces.shared-wksp.bound)" == "true" && -d "$(workspaces.shared-wksp.path)/create-keycloak-users" &&  -f "$(workspaces.shared-wksp.path)/create-keycloak-users/developer.json" ]]; then
+                      DEV_FILE=$(workspaces.shared-wksp.path)/create-keycloak-users/developer.json
+                      DEV_USERNAME=$(cat $DEV_FILE | jq -r '.username' | sed -e 's/^"//' -e 's/"$//')
+                      FNAME=$(cat $DEV_FILE | jq -r '.firstName' | sed -e 's/^"//' -e 's/"$//')
+                      LNAME=$(cat $DEV_FILE | jq -r '.lastName' | sed -e 's/^"//' -e 's/"$//')
+                      DEV_NAME="$FNAME $LNAME"
+                      DEV_EMAIL=$(cat $DEV_FILE | jq -r '.email' | sed -e 's/^"//' -e 's/"$//')
+
+                      cat << EOF > /tmp/developer.json
+                    {
+                      "username": "$DEV_USERNAME",
+                      "name": "$DEV_NAME",
+                      "email": "$DEV_EMAIL",
+                      "provider" : "openid_connect",
+                      "extern_uid": "$DEV_USERNAME",
+                      "force_random_password": "true"
+                    }
+                    EOF
+
+                      DEV_USER_ID=$(curl --silent \
+                        --url "https://$GL_URL/api/v4/users" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/developer.json | jq -r '.id')
+
+                      echo "Developer user registered [$DEV_USER_ID]"
+                    else
+                      echo "Developer user data could not be retrieved from shared workspace [shared-wksp]. Developer user not registered in gitlab"
+                    fi
+
+                    # assign dswadmin as owner of the group  dsw-on-techzone
+                    if [[ ! -z $ADM_USER_ID && ! -z $GROUP_ID ]] ; then
+                      cat << EOF > /tmp/member.json
+                    {
+                      "user_id": $ADM_USER_ID,
+                      "access_level": 50
+                    }
+                    EOF
+
+                      curl --silent \
+                        --url "https://$GL_URL/api/v4/groups/$GROUP_ID/members" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/member.json
+
+                      echo "Assigned admin user as group owner"
+                    fi
+
+                    # assign dswdev as maintainer of the group dsw-on-techzone
+                    if [[ ! -z $DEV_USER_ID && ! -z $GROUP_ID ]] ; then
+                      cat << EOF > /tmp/member.json
+                    {
+                      "user_id": $DEV_USER_ID,
+                      "access_level": 40
+                    }
+                    EOF
+
+                      curl --silent \
+                        --url "https://$GL_URL/api/v4/groups/$GROUP_ID/members" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/member.json
+
+                      echo "Assigned developer user as group maintainer"
+                    fi
+
+                    # Create personal access token for dswdev user
+                    if [[ ! -z $DEV_USER_ID ]] ; then
+                      echo "Creating personal access token (PAT) for user dswdev"
+                      cat << EOF > /tmp/token_request.json
+                    {
+                      "name": "dsw-designer-token",
+                      "expires_at": "$(date -u -d "8 weeks" '+%Y-%m-%d')",
+                      "scopes": ["api"]
+                    }
+                    EOF
+
+                      DEV_PAT=$(curl --silent \
+                        --url "https://$GL_URL/api/v4/users/$DEV_USER_ID/personal_access_tokens" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/token_request.json | jq -r '.token')
+
+
+                      if [[ "$(workspaces.shared-wksp.bound)" == "true" && ! -z $DEV_PAT ]] ; then
+                        if [ ! -d "$(workspaces.shared-wksp.path)/register-users-gitlab" ]; then
+                          mkdir $(workspaces.shared-wksp.path)/register-users-gitlab
+                        fi
+                        echo -n $DEV_PAT > $(workspaces.shared-wksp.path)/register-users-gitlab/dev-pat.txt
+                      fi
+                    else
+                      echo "No user id for developer user found. PAT not created!"
+                    fi
+
+                    # Create personal access token for dswdev user
+                    if [[ ! -z $ADM_USER_ID ]] ; then
+                      echo "Creating personal access token (PAT) for user dswadm"
+                      cat << EOF > /tmp/adm_token_request.json
+                    {
+                      "name": "dsw-designer-token",
+                      "expires_at": "$(date -u -d "8 weeks" '+%Y-%m-%d')",
+                      "scopes": ["api"]
+                    }
+                    EOF
+
+                      ADM_PAT=$(curl --silent \
+                        --url "https://$GL_URL/api/v4/users/$ADM_USER_ID/personal_access_tokens" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $TOKEN" \
+                        --data @/tmp/adm_token_request.json | jq -r '.token')
+
+
+                      if [[ "$(workspaces.shared-wksp.bound)" == "true" && ! -z $ADM_PAT ]] ; then
+                        if [ ! -d "$(workspaces.shared-wksp.path)/register-users-gitlab" ]; then
+                          mkdir $(workspaces.shared-wksp.path)/register-users-gitlab
+                        fi
+                        echo -n $ADM_PAT > $(workspaces.shared-wksp.path)/register-users-gitlab/adm-pat.txt
+                      fi
+
+                      echo -n $ADM_PAT > $(results.dsw-admin-pat.path)
+
+                    else
+                      echo "No user id for admin user found. PAT not created!"
+                    fi
+
+                    # Configure PAT for dev and admin user in DSW
+                    # TODO

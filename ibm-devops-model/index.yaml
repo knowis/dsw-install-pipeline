@@ -1,0 +1,57 @@
+apiVersion: v1
+entries:
+  ibm-devops-model:
+  - apiVersion: v2
+    appVersion: 5.1.1
+    created: "2026-01-27T16:32:46.012352961Z"
+    dependencies:
+    - name: k5-adr-sidekick
+      repository: oci://docker.knowis.net/ssob/design/k5-adr-sidekick-service
+      version: 2.2.0
+    - name: k5-asset-manager
+      repository: oci://docker.knowis.net/ssob/design/k5-asset-manager
+      version: 12.0.8
+    - name: k5-cli-provider
+      repository: oci://docker.knowis.net/ssob/design/cli-provider
+      version: 8.0.5
+    - name: k5-code-generation-provider
+      repository: oci://docker.knowis.net/ssob/design/code-generation-provider
+      version: 14.0.5
+    - name: k5-designer-backend
+      repository: oci://docker.knowis.net/ssob/design/designer-backend
+      version: 68.2.0
+    - name: k5-designer-frontend
+      repository: oci://docker.knowis.net/ssob/design/designer-frontend
+      version: 26.3.7
+    - name: k5-diagram-modeller
+      repository: oci://docker.knowis.net/ssob/design/k5-diagram-modeller-service
+      version: 3.0.8
+    - name: k5-generic-chat-completion
+      repository: oci://docker.knowis.net/ssob/design/k5-generic-chat-completion-service
+      version: 1.1.1
+    - name: k5-git-integration-controller
+      repository: oci://docker.knowis.net/ssob/design/git-integration-controller
+      version: 9.0.13
+    - name: k5-links-manager
+      repository: oci://docker.knowis.net/ssob/design/k5-links-manager
+      version: 3.0.2
+    - name: k5-plantuml-server
+      repository: oci://docker.knowis.net/ssob/run/k5-plantuml-server
+      version: 7.0.0
+    - name: k5-service-project-manager
+      repository: oci://docker.knowis.net/ssob/design/k5-service-project-manager
+      version: 13.0.7
+    - name: k5-shortlink
+      repository: oci://docker.knowis.net/ssob/design/k5-shortlink
+      version: 2.0.11
+    - name: k5-user-license-service
+      repository: oci://docker.knowis.net/ssob/run/k5-user-license-service
+      version: 2.0.10
+    description: A Helm chart for IBM DevOps Solution Workbench (DSW) - Model
+    digest: a7b88cfed6e3d47c2129cb068ab54209963c9f9d7ab98217320c329b47fb3f9f
+    name: ibm-devops-model
+    type: application
+    urls:
+    - ibm-devops-model-5.1.1.tgz
+    version: 5.1.1
+generated: "2026-01-27T16:32:45.980959594Z"

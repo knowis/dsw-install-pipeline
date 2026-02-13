@@ -1,0 +1,141 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: install-gitlab
+spec:
+  params:
+    - name: default-step-image
+      type: string
+      description: Image to use to execute step
+    - name: install-namespace
+      type: string
+      description: "Namespace to install into"
+      default:
+    - name: operator-name
+      type: string
+      description: "Name of the GitLab operator"
+      default: gitlab-operator-kubernetes
+    - name: cluster-app-url
+      type: string
+      description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+    - name: gitlab-helm-chart-version
+      type: string
+      description: "Version of the helm chart that the operator should install. Needs to be compatible with the operator version."
+      default: 9.8.2
+    - name: keycloak-dsw-realm-name
+      type: string
+      description: "Name of realm in keycloak to be used for authenticating to DSW"
+      default: "dsw"
+    - name: keycloak-credentials-secret
+      type: string
+      description: "Name of the secret holding the admin credentials for keycloak"
+      default: "keycloak-credentials"
+    - name: keycloak-url
+      type: string
+      description: "Url of keycloak admin host (without protocol)"
+    - name: instance-prefix
+      type: string
+      description: "Prefix to use for all gitlab subdomains"
+      default: dsw
+  results:
+    - name: release-status
+      description: "The status of the Helm release"
+  steps:
+    - name: create-gitlab-instance
+      image: "$(params.default-step-image)"
+      script: |
+        #!/usr/bin/bash
+        set -e
+
+        NS_INST=$(params.install-namespace)
+        APP_URL=$(params.cluster-app-url)
+        GL_PREFIX=$(params.instance-prefix)
+
+        oc create -f - << EOF
+        apiVersion: apps.gitlab.com/v1beta1
+        kind: GitLab
+        metadata:
+          name: gitlab
+          namespace: $NS_INST
+        spec:
+          chart:
+            values:
+              certmanager:
+                install: false
+              gitlab:
+                migrations:
+                  enabled: true
+                toolbox:
+                  antiAffinityLabels:
+                    matchLabels:
+                      app: gitaly
+                  replicas: 1
+              global:
+                appConfig:
+                  omniauth:
+                    enabled: true
+                    autoLinkSamlUser: false
+                    providers:
+                      - key: provider
+                        secret: keycloak-oauth2
+                    syncProfileAttributes:
+                      - email
+                    autoSignInWithProvider: null
+                    syncProfileFromProvider:
+                      - openid_connect
+                    allowBypassTwoFactor: []
+                    allowSingleSignOn:
+                      - openid_connect
+                    autoLinkUser: []
+                    externalProviders: []
+                    autoLinkLdapUser: false
+                    blockAutoCreatedUsers: true
+                gitaly:
+                  authToken: {}
+                  enabled: true
+                  external: []
+                  internal:
+                    names:
+                      - default
+                  service:
+                    externalPort: 8075
+                    internalPort: 8075
+                    name: gitaly
+                    type: ClusterIP
+                hosts:
+                  domain: $APP_URL
+                  https: true
+                  minio:
+                    name: $GL_PREFIX-minio-gitlab.$APP_URL
+                  smartcard: {}
+                  hostSuffix: null
+                  gitlab:
+                    name: $GL_PREFIX-gitlab.$APP_URL
+                  tls: {}
+                  registry:
+                    name: $GL_PREFIX-registry.$APP_URL
+                  kas:
+                    name: $GL_PREFIX-kas.$APP_URL
+                ingress:
+                  annotations:
+                    route.openshift.io/termination: edge
+                  class: openshift-default
+                  configureCertmanager: false
+                  tls:
+                    enabled: false
+                    secretName: gitlab-secrets
+                redis:
+                  auth:
+                    enabled: true
+              postgresql:
+                primary:
+                  extendedConfiguration: max_connections = 200
+              tls:
+                application:
+                  allowClusterRoles: true
+                  create: false
+                  links: []
+                externalPort: 8076
+                internalPort: 8076
+            version: $(params.gitlab-helm-chart-version)
+        EOF
