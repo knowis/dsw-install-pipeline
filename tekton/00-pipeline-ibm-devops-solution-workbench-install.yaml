@@ -1214,6 +1214,81 @@ spec:
                     KC_CRED_SECRET=$(params.keycloak-credentials-secret)
                     GL_ROOT_SECRET=gitlab-gitlab-initial-root-password # will always be the case if the gitlab CR has a name of 'gitlab'
 
+                    wait_for_http() {
+                        # Configuration
+                        local URL="${1}"
+                        local TIMEOUT="${2:-300}"  # Default 5 minutes
+                        local INTERVAL="${3:-5}"   # Default 5 seconds between attempts
+
+                        # Validation
+                        if [ -z "$URL" ]; then
+                            echo "Error: URL is required"
+                            echo "Usage: wait_for_http <url> [timeout_seconds] [interval_seconds]"
+                            echo "Example: wait_for_http https://example.com 300 5"
+                            return 1
+                        fi
+
+                        # Validate timeout and interval are numbers
+                        if ! [[ "$TIMEOUT" =~ ^[0-9]+$ ]]; then
+                            echo "Error: Timeout must be a positive integer"
+                            return 1
+                        fi
+
+                        if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]]; then
+                            echo "Error: Interval must be a positive integer"
+                            return 1
+                        fi
+
+                        echo "Waiting for HTTP endpoint: $URL"
+                        echo "Timeout: ${TIMEOUT}s, Check interval: ${INTERVAL}s"
+                        echo "----------------------------------------"
+
+                        local START_TIME=$(date +%s)
+                        local ELAPSED=0
+
+                        while [ $ELAPSED -lt $TIMEOUT ]; do
+                            local CURRENT_TIME=$(date +%s)
+                            ELAPSED=$((CURRENT_TIME - START_TIME))
+
+                            # Make HTTP request and capture response code
+                            local HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "$URL" 2>/dev/null || echo "000")
+
+                            # Check if we got a valid HTTP response (2xx or 3xx)
+                            if [[ "$HTTP_CODE" =~ ^[23][0-9][0-9]$ ]]; then
+                                echo "✓ Success! Received HTTP $HTTP_CODE after ${ELAPSED}s"
+                                return 0
+                            fi
+
+                            # Show progress
+                            if [ "$HTTP_CODE" = "000" ]; then
+                                echo "[${ELAPSED}s] Connection failed - retrying..."
+                            else
+                                echo "[${ELAPSED}s] HTTP $HTTP_CODE - retrying..."
+                            fi
+
+                            # Check if we've exceeded timeout before sleeping
+                            local REMAINING=$((TIMEOUT - ELAPSED))
+                            if [ $REMAINING -le 0 ]; then
+                                break
+                            fi
+
+                            # Sleep for interval or remaining time, whichever is shorter
+                            local SLEEP_TIME=$INTERVAL
+                            if [ $REMAINING -lt $INTERVAL ]; then
+                                SLEEP_TIME=$REMAINING
+                            fi
+
+                            sleep $SLEEP_TIME
+                        done
+
+                        # Timeout reached
+                        echo "✗ Timeout reached after ${TIMEOUT}s without valid HTTP response"
+                        return 1
+                    }
+
+                    echo "Waiting for max 20 minutes for new gitlab instance to be available"
+                    wait_for_http "https://$GL_URL/oauth/token" 1200 30
+
                     # obtain gitlab initial root credentials
                     echo "Obtaining GitLab root password from secret $GL_ROOT_SECRET"
                     ROOT_PW="$(oc get secret $GL_ROOT_SECRET -o jsonpath='{.data.password}' -n $NS_INST|base64 -d)"
