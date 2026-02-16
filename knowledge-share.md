@@ -61,6 +61,17 @@ Die Pipeline besteht derzeit aus 9 Tasks
 
 ![DSW Install Pipeline (OpenShift Console)](/dsw-install-pipeline.png)
 
+#### Pipeline ToC
+1. [bootstrap](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L34)
+2. [create-install-namespaces](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L70)
+3. [obtain-entitled-registry-token](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L128)
+4. [create-pull-secret](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L139)
+5. [install-keycloak](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L185)
+6. [create-mandatory-config](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L445)
+7. [install-dsw](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L551)
+8. [install-gitlab](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L671)
+9. [configure-users](tekton/00-pipeline-ibm-devops-solution-workbench-install.yaml?ref_type=heads#L999)
+
 Der Task, der das DSW helm chart installiert ist zwar gecodet aber noch nicht final getestet, da da engültige helm chart mit embedded FerretDB (anstatt MongoDB) noch nicht verfügbar ist. Zudem haben ich mich - nach Absprache mit Sales - auf die Design Time Komponenten konzentriert und die Runtime (Deployment Target, ArgoCD) derzeit noch nicht angelegt. Auch die Schema Registry fehlt noch (sollte aber nicht zu aufwändig sein, da wir jetzt wissen, dass wir den Operator verwenden können und die grundsätzliche Vorgehensweise im Schritt install-gitlab bereits einmal durchexerziert ist).
 
 Derzeit verwenden alle Tasks und Schritte das gleiche Container Image zur Ausführung, dessen Definition ebenfalls in diesem Repo enthalten ist und welches wichtige commands wie oc, helm und jq enthält und auf Red Hats UBI 9 Base Image beruht. Siehe [k8stools](/container-images/k8stools).
