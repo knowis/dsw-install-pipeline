@@ -18,6 +18,8 @@ Der grobe Prozess für eine solche Kiosk Installation verläuft ungefähr so:
 4. Als nächstes wird die für das gewählte Produkt passende Tekton Pipeline auf dem neuen Cluster "applied" und dadurch zur Ausführung gebracht.
 5. Nach erfolgreicher Ausführung wird der bestellende Nutzer benachrichtigt und vermutlich (wie das funktioniert weiß ich noch nicht) in Kenntnis über wichtige Endpunkte, Zugangsdaten etc gesetzt.
 
+
+
 ## Tekton Basics
 
 [Tekton](https://tekton.dev) ist eine Software, die ähnlich wie jenkins, GitHub Actions oder GitLab CI/CD dazu dient, eine Reihe von Schritten auszuführen, gewöhnlich um aus Software Quellcode eine ausführbare Datei und weitere Artefakte zu erstellen. Im Unterschied zu den geannten Alternativen, werden die Schritte allerdings direkt auf einem OpenShift/Kubernetes Cluster zur Ausführung gebracht.
@@ -40,6 +42,8 @@ Für das Ausführen einer Task Instanz wird dabei durch den Tekton Operator ein 
 
 Mehrere Tasks können von einer Pipeline Resource composed werden. Dabei können Results eines Tasks als Eingabe Parameter eines weiteren Tasks verwendet werden. Tekton stellt dann sicher, dass bei der Ausführung der Pipeline Tasks erst dann ausgeführt werden, wenn die Result produzierenden Tasks erfolgreich beendet sind. Eine Pipeline Resource ist wie Task ähnlich einer Klassendefinition  - um eine Pipeline auszuführen benötigt es zusätzlich zur Pipeline Resource eine PipelineRun Resource. Erst wenn diese angelegt ist und (wie TaskRun) die Pipeline Instanz parametriert, wird de Pipeline durchgeführt. Dabei wird für jeden Task der Pipeline ein Pod angelegt und in diesem Pod werden dann alle Schritte, die im Task definiert sind (jeder in seinem eigenen Container) ausgeführt.
 
+Um die Schritte eines Tasks ausführen zu können, müssen natürlich geeignete Container Images vorliegen. Diese müssen die in den Schritt Skripten verwendeten commands natürlich enthalten. 
+
 ## Die DSW Install Pipeline
 
 ### Annahmen (bestätigte und unbestätigte) zu Tekton Pipeline in TechZone
@@ -56,3 +60,24 @@ Mehrere Tasks können von einer Pipeline Resource composed werden. Dabei können
 Die Pipeline besteht derzeit aus 9 Tasks
 
 ![DSW Install Pipeline (OpenShift Console)](/dsw-install-pipeline.png)
+
+Der Task, der das DSW helm chart installiert ist zwar gecodet aber noch nicht final getestet, da da engültige helm chart mit embedded FerretDB (anstatt MongoDB) noch nicht verfügbar ist. Zudem haben ich mich - nach Absprache mit Sales - auf die Design Time Komponenten konzentriert und die Runtime (Deployment Target, ArgoCD) derzeit noch nicht angelegt. Auch die Schema Registry fehlt noch (sollte aber nicht zu aufwändig sein, da wir jetzt wissen, dass wir den Operator verwenden können und die grundsätzliche Vorgehensweise im Schritt install-gitlab bereits einmal durchexerziert ist).
+
+Derzeit verwenden alle Tasks und Schritte das gleiche Container Image zur Ausführung, dessen Definition ebenfalls in diesem Repo enthalten ist und welches wichtige commands wie oc, helm und jq enthält und auf Red Hats UBI 9 Base Image beruht. Siehe [k8stools](/container-images/k8stools).
+
+Sobald das helm chart verfügbar und getestet ist, ist bei derzeitigem Stand nach Ausführen der Pipeline folgendes verfügbar:
+- Keycloak installiert und 2 Nutzer in Keycloak angelegt (dswdev und dswadmin)
+- Obligatorische Konfigurations Secrets angelegt
+- DSW installiert
+- GitLab installiert und obige Nutzer registriert
+- Gruppe in GitLab angelegt und Nutzer auf dieser Gruppe berechtigt
+
+Was offensichtlich noch fehlt:
+- Konfiguration der Gitlab Tokens im Designer für beide Nutzer
+- Konfiguration Asset Catalog
+- Konfiguration Component Repository
+- Konfiguration Schema Registry (und Installation Schema Registry)
+- Konfiguration ArgoCD
+- Konfiguration Deployment Target
+
+Vor allem aber müssen noch Inhalte in GitLab importiert werden und Workspaces für mindestens den Developer Nutzer, die diese Inhalte leicht zugänglich machen konfiguriert werden. Hier sollte es möglich sein, Konzepte aus unserer Onboarding Automation zu verwenden (wenn auch nur die Konzepte).
