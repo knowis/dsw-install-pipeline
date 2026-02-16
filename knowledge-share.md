@@ -52,3 +52,7 @@ Mehrere Tasks können von einer Pipeline Resource composed werden. Dabei können
 - Die Pipeline Quellen werden final in IBMs GitHub hinterlegt und von dort aus dem TechZone Kiosk aufgerufen
 
 ### Status (16. Februar 2026)
+
+Die Pipeline besteht derzeit aus 9 Tasks
+
+![DSW Install Pipeline (OpenShift Console)](/dsw-install-pipeline.png)
