@@ -25,5 +25,6 @@ The DSW install pipeline focuses on installing the design-time parts of DSW firs
 - install dsw (script & helm) 🚀
 - install gitea/forgejo/gitlab ✔️
 - Create user, configure user and provide output about how and where to login in the pipeline 🚀
+- Configure DSW: configure git provider, component repository(?), schema registry(?)
 - fork, clone resources/assets needed for a user to get started easily
 - Display / return information about what was created: user names and passwords, important http endpoints, version information
