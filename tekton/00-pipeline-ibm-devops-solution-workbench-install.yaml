@@ -28,6 +28,10 @@ spec:
           type: string
           description: "Execute the install-dsw task"
           default: "true"
+        - name: execute-obtain-entitled-registry-token
+          type: string
+          description: "Execute the obtain-entitled-registry-token task"
+          default: "true"
     workspaces:
         - name: global-wksp
     tasks:
@@ -136,10 +140,16 @@ spec:
           taskRef:
             kind: Task
             name: ibmcloud-secrets-manager-get
+          when:
+            - input: "$(params.execute-obtain-entitled-registry-token)"
+              operator: in
+              values: ["true"]
         - name: create-pull-secret
           params:
               - name: default-step-image
                 value: "$(params.default-step-image)"
+              - name: pull-secret-name
+                value: "ibm-entitlement-key1"
               - name: ibm-entitlement-token
                 value: "$(tasks.obtain-entitled-registry-token.results.secret-value)"
               - name: install-namespace
@@ -161,7 +171,7 @@ spec:
                 - name: pull-secret-name
                   type: string
                   description: "Pull secret allowing images from ibm entitled registry (*.icr.io) to be pulled"
-                  default: ibm-entitlement-key1
+                  default: ibm-entitlement-key
                 - name: ibm-entitlement-token
                   type: string
                   description: "Token that can be used to authenticate against entitled registry (cp.icr.io)"
@@ -180,7 +190,7 @@ spec:
                     set -e
 
                     echo "creating entitled registry pull secret"
-                    oc create secret docker-registry $(params.pull-secret-name) --docker-username=iamapikey --docker-password=$(params.pull-secret-name) --docker-email='' --docker-server=$(params.entitled-registry-url) -n $(params.install-namespace)
+                    oc create secret docker-registry $(params.pull-secret-name) --docker-username=iamapikey --docker-password=$(params.ibm-entitlement-token) --docker-email='' --docker-server=$(params.entitled-registry-url) -n $(params.install-namespace)
 
         - name: install-keycloak
           params:

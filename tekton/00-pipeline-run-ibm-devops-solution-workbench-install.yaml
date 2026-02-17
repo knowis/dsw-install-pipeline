@@ -8,6 +8,8 @@ spec:
   params:
     - name: execute-install-dsw
       value: "false"
+    - name: execute-obtain-entitled-registry-token
+      value: "false"
   workspaces:
       - name: global-wksp
         volumeClaimTemplate:
