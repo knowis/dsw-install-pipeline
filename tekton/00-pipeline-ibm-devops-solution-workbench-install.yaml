@@ -16,6 +16,10 @@ spec:
           type: string
           description: "URL of helm repo providing the DSW helm chart"
           default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+        - name: devops-model-container-image-registry
+          type: string
+          description: Adress of container image registry hosting the images referenced in the dsw chart
+          default: de.icr.io/isw_release
         - name: devops-model-chart-version
           type: string
           description: "DSW chart version to use"
@@ -32,6 +36,10 @@ spec:
           type: string
           description: "Execute the obtain-entitled-registry-token task"
           default: "true"
+        - name: rational-license-key-server
+          type: string
+          description: "Adress of the Rational License Key server that will be issueing licenses for this installation in the format @host.domain.com"
+          default: "@dummy-license-server"
     workspaces:
         - name: global-wksp
     tasks:
@@ -572,10 +580,14 @@ spec:
                 value: "$(tasks.install-keycloak.results.keycloak-url)"
               - name: devops-model-chart-repo
                 value: "$(params.devops-model-chart-repo)"
+              - name: devops-model-container-image-registry
+                value: "$(params.devops-model-container-image-registry)"
               - name: devops-model-chart-version
                 value: "$(params.devops-model-chart-version)"
               - name: install-namespace
                 value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+              - name: rational-license-key-server
+                value: "$(params.rational-license-key-server)"
           when:
               - input: "$(params.execute-install-dsw)"
                 operator: in
@@ -605,6 +617,10 @@ spec:
                   type: string
                   description: Fully qualified repo url where the dsw (ibm-devops-model) chart is published
                   default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+                - name: devops-model-container-image-registry
+                  type: string
+                  description: Adress of container image registry hosting the images referenced in the chart
+                  default: de.icr.io/isw_release
                 - name: devops-model-release-name
                   type: string
                   description: "Release name to use for helm install cmd of devops-mode-chart"
@@ -619,10 +635,14 @@ spec:
                   default: 5.1.1
                 - name: cluster-app-url
                   type: string
-                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcluster.tld
                 - name: install-namespace
                   type: string
                   description: "Namespace to install into"
+                - name: rational-license-key-server
+                  type: string
+                  description: "Adress of the Rational License Key server that will be issueing licenses for this installation in the format @host.domain.com"
+                  default: "@dummy-license-server"
               steps:
                 - name: install-dsw-chart
                   image: "$(params.default-step-image)"
@@ -656,9 +676,9 @@ spec:
                     # value overrides as provided by MMe on January, 22nd 2026 (teams)
                     global:
                       domain: dsw$(params.cluster-app-url)
-                      rationalLicenseKeyServer: "@baw-isf.knowis.net"                     # TODO: change to your server
+                      rationalLicenseKeyServer: "$(params.rational-license-key-server)"                     # TODO: change to your server
                       image:
-                        registry: de.icr.io/isw_release
+                        registry: "$(params.devops-model-container-image-registry)"
                         privateRegistry: ""
                         prefix: ""
                       platform:

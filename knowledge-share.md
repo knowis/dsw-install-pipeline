@@ -91,5 +91,6 @@ Was offensichtlich noch fehlt:
 - Konfiguration ArgoCD
 - Konfiguration Deployment Target
 - Integration der Pipeline in TechZone inklusive Test
+- Integration mit (öffentlichem) License Server des DevOps Loop Teams
 
 Vor allem aber müssen noch Inhalte in GitLab importiert werden und Workspaces für mindestens den Developer Nutzer, die diese Inhalte leicht zugänglich machen konfiguriert werden. Hier sollte es möglich sein, Konzepte aus unserer Onboarding Automation zu verwenden (wenn auch nur die Konzepte).
