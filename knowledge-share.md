@@ -80,7 +80,7 @@ Sobald das helm chart verfügbar und getestet ist, ist bei derzeitigem Stand nac
 - Keycloak installiert und 2 Nutzer in Keycloak angelegt (dswdev und dswadmin)
 - Obligatorische Konfigurations Secrets angelegt
 - DSW installiert
-- GitLab installiert und obige Nutzer registriert
+- GitLab installiert und obige Nutzer registriert und Personal Access Tokens für diese Nutzer generiert
 - Gruppe in GitLab angelegt und Nutzer auf dieser Gruppe berechtigt
 
 Was offensichtlich noch fehlt:
@@ -90,5 +90,6 @@ Was offensichtlich noch fehlt:
 - Konfiguration Schema Registry (und Installation Schema Registry)
 - Konfiguration ArgoCD
 - Konfiguration Deployment Target
+- Integration der Pipeline in TechZone inklusive Test
 
 Vor allem aber müssen noch Inhalte in GitLab importiert werden und Workspaces für mindestens den Developer Nutzer, die diese Inhalte leicht zugänglich machen konfiguriert werden. Hier sollte es möglich sein, Konzepte aus unserer Onboarding Automation zu verwenden (wenn auch nur die Konzepte).
