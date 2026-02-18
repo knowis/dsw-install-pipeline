@@ -11,7 +11,7 @@ spec:
     - name: execute-obtain-entitled-registry-token
       value: "false"
     - name: devops-model-container-image-registry
-      value: cp.icr.io
+      value: cp.icr.io/cp
     - name: rational-license-key-server
       value: "@baw-isf.knowis.net"
   workspaces:
