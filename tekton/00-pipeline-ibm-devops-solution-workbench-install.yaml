@@ -16,6 +16,10 @@ spec:
           type: string
           description: "URL of helm repo providing the DSW helm chart"
           default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+        - name: devops-model-container-image-registry
+          type: string
+          description: Adress of container image registry hosting the images referenced in the dsw chart
+          default: de.icr.io/isw_release
         - name: devops-model-chart-version
           type: string
           description: "DSW chart version to use"
@@ -28,6 +32,14 @@ spec:
           type: string
           description: "Execute the install-dsw task"
           default: "true"
+        - name: execute-obtain-entitled-registry-token
+          type: string
+          description: "Execute the obtain-entitled-registry-token task"
+          default: "true"
+        - name: rational-license-key-server
+          type: string
+          description: "Adress of the Rational License Key server that will be issueing licenses for this installation in the format @host.domain.com"
+          default: "@dummy-license-server"
     workspaces:
         - name: global-wksp
     tasks:
@@ -136,10 +148,16 @@ spec:
           taskRef:
             kind: Task
             name: ibmcloud-secrets-manager-get
+          when:
+            - input: "$(params.execute-obtain-entitled-registry-token)"
+              operator: in
+              values: ["true"]
         - name: create-pull-secret
           params:
               - name: default-step-image
                 value: "$(params.default-step-image)"
+              - name: pull-secret-name
+                value: "ibm-entitlement-key1"
               - name: ibm-entitlement-token
                 value: "$(tasks.obtain-entitled-registry-token.results.secret-value)"
               - name: install-namespace
@@ -161,7 +179,7 @@ spec:
                 - name: pull-secret-name
                   type: string
                   description: "Pull secret allowing images from ibm entitled registry (*.icr.io) to be pulled"
-                  default: ibm-entitlement-key1
+                  default: ibm-entitlement-key
                 - name: ibm-entitlement-token
                   type: string
                   description: "Token that can be used to authenticate against entitled registry (cp.icr.io)"
@@ -180,7 +198,7 @@ spec:
                     set -e
 
                     echo "creating entitled registry pull secret"
-                    oc create secret docker-registry $(params.pull-secret-name) --docker-username=iamapikey --docker-password=$(params.pull-secret-name) --docker-email='' --docker-server=$(params.entitled-registry-url) -n $(params.install-namespace)
+                    oc create secret docker-registry $(params.pull-secret-name) --docker-username=iamapikey --docker-password=$(params.ibm-entitlement-token) --docker-email='' --docker-server=$(params.entitled-registry-url) -n $(params.install-namespace)
 
         - name: install-keycloak
           params:
@@ -562,10 +580,14 @@ spec:
                 value: "$(tasks.install-keycloak.results.keycloak-url)"
               - name: devops-model-chart-repo
                 value: "$(params.devops-model-chart-repo)"
+              - name: devops-model-container-image-registry
+                value: "$(params.devops-model-container-image-registry)"
               - name: devops-model-chart-version
                 value: "$(params.devops-model-chart-version)"
               - name: install-namespace
                 value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+              - name: rational-license-key-server
+                value: "$(params.rational-license-key-server)"
           when:
               - input: "$(params.execute-install-dsw)"
                 operator: in
@@ -595,6 +617,10 @@ spec:
                   type: string
                   description: Fully qualified repo url where the dsw (ibm-devops-model) chart is published
                   default: "https://raw.githubusercontent.com/knowis/dsw-install-pipeline/refs/heads/main/ibm-devops-model"
+                - name: devops-model-container-image-registry
+                  type: string
+                  description: Adress of container image registry hosting the images referenced in the chart
+                  default: de.icr.io/isw_release
                 - name: devops-model-release-name
                   type: string
                   description: "Release name to use for helm install cmd of devops-mode-chart"
@@ -609,10 +635,14 @@ spec:
                   default: 5.1.1
                 - name: cluster-app-url
                   type: string
-                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
+                  description: The cluster host needed to construct routes/ingresses in the form of apps.yourcluster.tld
                 - name: install-namespace
                   type: string
                   description: "Namespace to install into"
+                - name: rational-license-key-server
+                  type: string
+                  description: "Adress of the Rational License Key server that will be issueing licenses for this installation in the format @host.domain.com"
+                  default: "@dummy-license-server"
               steps:
                 - name: install-dsw-chart
                   image: "$(params.default-step-image)"
@@ -646,9 +676,9 @@ spec:
                     # value overrides as provided by MMe on January, 22nd 2026 (teams)
                     global:
                       domain: dsw$(params.cluster-app-url)
-                      rationalLicenseKeyServer: "@baw-isf.knowis.net"                     # TODO: change to your server
+                      rationalLicenseKeyServer: "$(params.rational-license-key-server)"                     # TODO: change to your server
                       image:
-                        registry: de.icr.io/isw_release
+                        registry: "$(params.devops-model-container-image-registry)"
                         privateRegistry: ""
                         prefix: ""
                       platform:
@@ -846,7 +876,7 @@ spec:
                     EOF
 
 
-                    CLIENT_ID=$(curl -i  \
+                    CLIENT_ID=$(curl -i --silent  \
                       --url https://$KC_URL/admin/realms/$KC_REALM/clients \
                       --header 'content-type: application/json' \
                       --header "Authorization: Bearer $TOKEN" \
@@ -1086,7 +1116,7 @@ spec:
 
                     echo "Fetching realm roles"
 
-                    REALM_ROLES=$(curl --request GET \
+                    REALM_ROLES=$(curl --request --silent GET \
                       --url https://$KC_URL/admin/realms/$KC_REALM/roles \
                       --header 'content-type: application/json' \
                       --header "Authorization: Bearer $TOKEN")
@@ -1129,7 +1159,7 @@ spec:
                       cp /tmp/developer.json $(workspaces.shared-wksp.path)/create-keycloak-users/
                     fi
 
-                    DEV_USER_ID=$(curl -i  \
+                    DEV_USER_ID=$(curl -i --silent \
                       --url https://$KC_URL/admin/realms/$KC_REALM/users \
                       --header 'content-type: application/json' \
                       --header "Authorization: Bearer $TOKEN" \
@@ -1137,7 +1167,7 @@ spec:
 
                     echo "Developer user created has user id $DEV_USER_ID"
 
-                    curl -i  \
+                    curl -i --silent \
                       --url https://$KC_URL/admin/realms/$KC_REALM/users/$DEV_USER_ID/role-mappings/realm \
                       --header 'content-type: application/json' \
                       --header "Authorization: Bearer $TOKEN" \
@@ -1184,7 +1214,7 @@ spec:
                       --data-urlencode 'username=admin' \
                       --data-urlencode "password=$KC_ADMIN_PW" | jq -r '.access_token')
 
-                    ADM_USER_ID=$(curl -i  \
+                    ADM_USER_ID=$(curl -i --silent \
                       --url https://$KC_URL/admin/realms/$KC_REALM/users \
                       --header 'content-type: application/json' \
                       --header "Authorization: Bearer $TOKEN" \
@@ -1193,7 +1223,7 @@ spec:
                     echo "Admin user created has user id $ADM_USER_ID"
 
 
-                    curl -i  \
+                    curl -i --silent \
                       --url https://$KC_URL/admin/realms/$KC_REALM/users/$ADM_USER_ID/role-mappings/realm \
                       --header 'content-type: application/json' \
                       --header "Authorization: Bearer $TOKEN" \

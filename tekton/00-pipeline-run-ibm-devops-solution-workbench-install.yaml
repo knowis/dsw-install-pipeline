@@ -7,7 +7,13 @@ spec:
     name: dsw-install
   params:
     - name: execute-install-dsw
+      value: "true"
+    - name: execute-obtain-entitled-registry-token
       value: "false"
+    - name: devops-model-container-image-registry
+      value: cp.icr.io
+    - name: rational-license-key-server
+      value: "@baw-isf.knowis.net"
   workspaces:
       - name: global-wksp
         volumeClaimTemplate:
