@@ -40,6 +40,10 @@ spec:
           type: string
           description: "Adress of the Rational License Key server that will be issueing licenses for this installation in the format @host.domain.com"
           default: "@dummy-license-server"
+        - name: development-mode
+          type: string
+          description: "Toggles development mode on/off. In development mode some things might be handled slightly differently, potentially taking shortcuts"
+          default: "false"
     workspaces:
         - name: global-wksp
     tasks:
@@ -199,7 +203,54 @@ spec:
 
                     echo "creating entitled registry pull secret"
                     oc create secret docker-registry $(params.pull-secret-name) --docker-username=iamapikey --docker-password=$(params.ibm-entitlement-token) --docker-email='' --docker-server=$(params.entitled-registry-url) -n $(params.install-namespace)
+        - name: create-pull-secret-internal
+          params:
+              - name: default-step-image
+                value: "$(params.default-step-image)"
+              - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+          workspaces:
+              - name: shared-wksp
+                workspace: global-wksp
+          when:
+              - input: "$(params.development-mode)"
+                operator: in
+                values: ["true"]
+          taskSpec:
+              displayName: Create IBM entitled registry pull secret from an existing secret in the pipeline namespace named ibm-entitlement-key
+              description: "Task create pull secret for dsw images used when running the pipeline internally"
+              workspaces:
+                - name: shared-wksp
+                  description: |
+                    Folder to read and write files to that are shared amongst tasks in the parent pipeline
+              params:
+                - name: default-step-image
+                  type: string
+                  description: Image to use to execute step
+                - name: install-namespace
+                  type: string
+                  description: "Namespace to install secret into"
+              steps:
+                - name: create-secret
+                  image: "$(params.default-step-image)"
+                  script: |
+                    #!/usr/bin/bash
+                    set -e
 
+                    echo "copying entitled registry pull secret"
+
+                    DOCKER_CFG=$(oc get secret ibm-entitlement-key -o jsonpath='{.data.\.dockercfg}')
+
+                    oc apply -f - << EOF
+                    kind: Secret
+                    apiVersion: v1
+                    metadata:
+                      name: ibm-entitlement-key
+                      namespace: "$(params.install-namespace)"
+                    data:
+                      .dockercfg: $DOCKER_CFG
+                    type: kubernetes.io/dockercfg
+                    EOF
         - name: install-keycloak
           params:
               - name: default-step-image
@@ -928,6 +979,8 @@ spec:
               - name: default-step-image
                 value: "$(params.default-step-image)"
               - name: install-namespace
+                value: "$(tasks.create-install-namespaces.results.tool-namespace)"
+              - name: support-namespace
                 value: "$(tasks.create-install-namespaces.results.support-namespace)"
               - name: cluster-app-url
                 value: "$(tasks.bootstrap.results.cluster-app-url)"
@@ -953,6 +1006,9 @@ spec:
                 - name: install-namespace
                   type: string
                   description: "Namespace to install into"
+                - name: support-namespace
+                  type: string
+                  description: "Namespace supporting software is installed into"
                 - name: cluster-app-url
                   type: string
                   description: The cluster host needed to construct routes/ingresses in the form of apps.yourcloster.tld
@@ -992,7 +1048,7 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
-                    NS_INST=$(params.install-namespace)
+                    NS_SUPP=$(params.support-namespace)
                     KC_URL=$(params.keycloak-url)
                     KC_REALM=$(params.keycloak-dsw-realm-name)
                     APP_URL=$(params.cluster-app-url)
@@ -1001,8 +1057,8 @@ spec:
 
                     echo "*** Creating a DSW developer and admin user in keycloak ***"
 
-                    echo "Reading keycloak credentials from secret $KC_CRED_SECRET in namespace $NS_INST"
-                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_INST|base64 -d)"
+                    echo "Reading keycloak credentials from secret $KC_CRED_SECRET in namespace $NS_SUPP"
+                    KC_ADMIN_PW="$(oc get secret $KC_CRED_SECRET -o jsonpath='{.data.admin-password}' -n $NS_SUPP|base64 -d)"
 
                     TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/master/protocol/openid-connect/token" \
                       --header 'Content-Type: application/x-www-form-urlencoded' \
@@ -1137,6 +1193,7 @@ spec:
                     #!/usr/bin/bash
                     set -e
 
+                    NS_SUPP=$(params.support-namespace)
                     NS_INST=$(params.install-namespace)
                     KC_URL=$(params.keycloak-url)
                     GL_URL=$(params.gitlab-url)
@@ -1144,6 +1201,7 @@ spec:
                     APP_URL=$(params.cluster-app-url)
                     KC_CRED_SECRET=$(params.keycloak-credentials-secret)
                     GL_ROOT_SECRET=gitlab-gitlab-initial-root-password # will always be the case if the gitlab CR has a name of 'gitlab'
+                    GL_PROVIDER_ALIAS=dsw-gitlab
 
                     wait_for_http() {
                         # Configuration
@@ -1222,7 +1280,7 @@ spec:
 
                     # obtain gitlab initial root credentials
                     echo "Obtaining GitLab root password from secret $GL_ROOT_SECRET"
-                    ROOT_PW="$(oc get secret $GL_ROOT_SECRET -o jsonpath='{.data.password}' -n $NS_INST|base64 -d)"
+                    ROOT_PW="$(oc get secret $GL_ROOT_SECRET -o jsonpath='{.data.password}' -n $NS_SUPP|base64 -d)"
 
                     # obtain root oauth token (valid for 2h)
                     echo "Obtaining oauth token for user root"
@@ -1265,6 +1323,7 @@ spec:
                       LNAME=$(cat $ADM_FILE | jq -r '.lastName' | sed -e 's/^"//' -e 's/"$//')
                       ADM_NAME="$FNAME $LNAME"
                       ADM_EMAIL=$(cat $ADM_FILE | jq -r '.email' | sed -e 's/^"//' -e 's/"$//')
+                      ADM_PW=$(cat $ADM_FILE | jq -r '.credentials[0].value' | sed -e 's/^"//' -e 's/"$//')
 
 
 
@@ -1297,6 +1356,7 @@ spec:
                       LNAME=$(cat $DEV_FILE | jq -r '.lastName' | sed -e 's/^"//' -e 's/"$//')
                       DEV_NAME="$FNAME $LNAME"
                       DEV_EMAIL=$(cat $DEV_FILE | jq -r '.email' | sed -e 's/^"//' -e 's/"$//')
+                      DEV_PW=$(cat $DEV_FILE | jq -r '.credentials[0].value' | sed -e 's/^"//' -e 's/"$//')
 
                       cat << EOF > /tmp/developer.json
                     {
@@ -1415,5 +1475,86 @@ spec:
                       echo "No user id for admin user found. PAT not created!"
                     fi
 
-                    # Configure PAT for dev and admin user in DSW
-                    # TODO
+                    # establish designer url, configure gitlab provider and set token for admin user
+                    if [[ ! -z $ADM_USERNAME && ! -z $ADM_PW && ! -z $ADM_PAT ]] ; then
+                      DSW_DESIGNER_URL=$(oc get route -n $NS_INST -l "app.kubernetes.io/name=dsw-k5-designer-frontend" -o jsonpath='{.items[0].spec.host}')
+                      echo "DSW designer is availabe at $DSW_DESIGNER_URL"
+
+                      ADM_USER_TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/$KC_REALM/protocol/openid-connect/token" \
+                        --header 'Content-Type: application/x-www-form-urlencoded' \
+                        --data-urlencode 'client_id=k5-designer-client' \
+                        --data-urlencode 'grant_type=password' \
+                        --data-urlencode "username=$ADM_USERNAME" \
+                        --data-urlencode "password=$ADM_PW" | jq -r '.access_token')
+
+                      echo "Successfully got k5-designer-client token for user $ADM_USERNAME"
+
+                      cat << EOF > /tmp/create-provider.json
+                    {
+                      "alias": "$GL_PROVIDER_ALIAS",
+                      "type": "Gitlab",
+                      "baseUrl": "https://$GL_URL",
+                      "readOnly": "false"
+                    }
+                    EOF
+
+                      curl --silent --request PUT \
+                        --url "https://$DSW_DESIGNER_URL/api/v1/gitProviders/-/actions/CreateGitProvider" \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $ADM_USER_TOKEN" \
+                        --data @/tmp/create-provider.json
+
+                      # configure PAT in DSW designer
+                      cat << EOF > /tmp/adm-pat-token.json
+                    {
+                      "name": "DSW-designer-token",
+                      "gitProviderAlias": "$GL_PROVIDER_ALIAS",
+                      "gitAccessToken": "$ADM_PAT",
+                      "gitUsername": "$ADM_USERNAME"
+                    }
+                    EOF
+                      curl --silent --request PUT \
+                        --url https://$DSW_DESIGNER_URL/api/v1/user/tokens/-/actions/CreateGitToken \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $ADM_USER_TOKEN" \
+                        --data @/tmp/adm-pat-token.json
+
+
+                      echo "Gitlab provider configured with user $ADM_USERNAME [$ADM_PW]"
+                    else
+                      echo "Couldn't configure gitlab provider using user $ADM_USERNAME"
+                    fi
+
+                    # Configure PAT for dev user in DSW
+                    # dev user
+
+                    if [[ ! -z $DEV_PAT && ! -z $DEV_USERNAME && ! -z $DEV_PW && ! -z $DSW_DESIGNER_URL ]] ; then
+                      # get a keycloak oauth token for user
+                      DEV_USER_TOKEN=$(curl --silent --location --request POST "https://$KC_URL/realms/$KC_REALM/protocol/openid-connect/token" \
+                        --header 'Content-Type: application/x-www-form-urlencoded' \
+                        --data-urlencode 'client_id=k5-designer-client' \
+                        --data-urlencode 'grant_type=password' \
+                        --data-urlencode "username=$DEV_USERNAME" \
+                        --data-urlencode "password=$DEV_PW" | jq -r '.access_token')
+
+                      # configure PAT in DSW designer
+                      cat << EOF > /tmp/dev-token.json
+                    {
+                      "name": "DSW-designer-token",
+                      "gitProviderAlias": "$GL_PROVIDER_ALIAS",
+                      "gitAccessToken": "$DEV_PAT",
+                      "gitUsername": "$DEV_USERNAME"
+                    }
+                    EOF
+                      curl --silent --request PUT \
+                        --url https://$DSW_DESIGNER_URL/api/v1/user/tokens/-/actions/CreateGitToken \
+                        --header 'content-type: application/json' \
+                        --header "Authorization: Bearer $DEV_USER_TOKEN" \
+                        --data @/tmp/dev-token.json
+
+
+
+                      echo "Configured GitLab token for user $DEV_USERNAME [$DEV_PW]"
+                    else
+                      echo "Couldn't configure GitLab token because of insufficient user info"
+                    fi

@@ -14,6 +14,8 @@ spec:
       value: cp.icr.io/cp
     - name: rational-license-key-server
       value: "@baw-isf.knowis.net"
+    - name: development-mode
+      value: "true"
   workspaces:
       - name: global-wksp
         volumeClaimTemplate:
